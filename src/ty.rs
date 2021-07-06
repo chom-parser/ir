@@ -3,7 +3,7 @@ use crate::Ids;
 /// Type definition.
 pub struct Type<T: Ids> {
 	/// Index of the containing module.
-	module: u32,
+	module: Option<u32>,
 
 	/// Identifier.
 	id: Id<T>,
@@ -13,29 +13,54 @@ pub struct Type<T: Ids> {
 
 	/// Description.
 	desc: Desc<T>,
+
+	/// Methods.
+	methods: Vec<u32>
 }
 
 impl<T: Ids> Type<T> {
 	/// Creates a new opaque type from a grammar extern type.
-	pub fn opaque(module: u32, id: Id<T>) -> Self {
+	pub fn opaque(module: u32, id: T::Type) -> Self {
 		Self {
-			module,
-			id,
+			module: Some(module),
+			id: Id::Defined(id),
 			parameters: Vec::new(),
 			desc: Desc::Opaque,
+			methods: Vec::new()
 		}
 	}
 
-	pub fn new(module: u32, id: Id<T>, desc: Desc<T>) -> Self {
+	pub fn new(module: u32, id: T::Type, desc: Desc<T>) -> Self {
 		Self {
-			module,
-			id,
+			module: Some(module),
+			id: Id::Defined(id),
 			parameters: Vec::new(),
 			desc,
+			methods: Vec::new()
 		}
 	}
 
-	pub fn module(&self) -> u32 {
+	pub(crate) fn native(id: Native) -> Self {
+		let desc = match id {
+			Native::Option => {
+				let mut enm = Enum::new();
+				enm.add_variant(Variant::Native(NativeVariant::None));
+				enm.add_variant(Variant::Native(NativeVariant::Some));
+				Desc::Enum(enm)
+			},
+			_ => Desc::Opaque
+		};
+
+		Self {
+			module: None,
+			id: Id::Native(id),
+			parameters: Vec::new(),
+			desc,
+			methods: Vec::new()
+		}
+	}
+
+	pub fn module(&self) -> Option<u32> {
 		self.module
 	}
 
@@ -60,6 +85,10 @@ impl<T: Ids> Type<T> {
 			Desc::Enum(enm) => Some(enm),
 			_ => None,
 		}
+	}
+
+	pub(crate) fn add_method(&mut self, f: u32) {
+		self.methods.push(f)
 	}
 }
 

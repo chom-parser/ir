@@ -1,18 +1,18 @@
-use super::{ty, Ids, Routine};
+use super::{ty, Ids};
 use std::collections::HashSet;
 
 /// Module.
 pub struct Module<T: Ids> {
 	/// Index of the module in `Context::modules`.
-	index: u32,
+	index: Option<u32>,
 
 	/// Parent module.
 	parent: Option<u32>,
 
-	/// Module id.
+	/// Module's id.
 	id: Id<T>,
 
-	/// Module roles.
+	/// Module's roles.
 	roles: HashSet<Role>,
 
 	/// Types defined in the module.
@@ -21,8 +21,8 @@ pub struct Module<T: Ids> {
 	/// Sub-modules.
 	modules: Vec<u32>,
 
-	/// Defined routines.
-	routines: Vec<Routine>,
+	/// Module's functions.
+	functions: Vec<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -37,30 +37,34 @@ pub enum Role {
 impl<T: Ids> Module<T> {
 	pub fn root() -> Self {
 		Self {
-			index: 0,
+			index: None,
 			parent: None,
 			id: Id::Root,
 			roles: HashSet::new(),
 			types: Vec::new(),
 			modules: Vec::new(),
-			routines: Vec::new(),
+			functions: Vec::new(),
 		}
 	}
 
-	pub fn new(index: u32, parent: u32, name: T::Module) -> Self {
+	pub fn new(parent: u32, name: T::Module) -> Self {
 		Self {
-			index,
+			index: None,
 			parent: Some(parent),
 			id: Id::Named(name),
 			roles: HashSet::new(),
 			types: Vec::new(),
 			modules: Vec::new(),
-			routines: Vec::new(),
+			functions: Vec::new(),
 		}
 	}
 
-	pub fn index(&self) -> u32 {
+	pub fn index(&self) -> Option<u32> {
 		self.index
+	}
+
+	pub(crate) fn set_index(&mut self, i: u32) {
+		self.index = Some(i)
 	}
 
 	pub fn parent(&self) -> Option<u32> {
@@ -88,24 +92,24 @@ impl<T: Ids> Module<T> {
 		self.modules.iter().cloned()
 	}
 
-	pub fn routines(&self) -> impl '_ + Iterator<Item = &'_ Routine> {
-		self.routines.iter()
+	pub fn functions(&self) -> impl '_ + Iterator<Item = u32> {
+		self.functions.iter().cloned()
 	}
 
 	pub fn add_role(&mut self, role: Role) {
 		self.roles.insert(role);
 	}
 
-	pub fn add_type(&mut self, ty: ty::Ref) {
+	pub(crate) fn add_type(&mut self, ty: ty::Ref) {
 		self.types.push(ty)
 	}
 
-	pub fn add_module(&mut self, m: u32) {
+	pub(crate) fn add_module(&mut self, m: u32) {
 		self.modules.push(m)
 	}
 
-	pub fn add_routine(&mut self, routine: Routine) {
-		self.routines.push(routine)
+	pub(crate) fn add_function(&mut self, f: u32) {
+		self.functions.push(f)
 	}
 }
 
@@ -124,31 +128,6 @@ impl<T: Ids> Id<T> {
 		match self {
 			Self::Named(id) => Some(id),
 			_ => None,
-		}
-	}
-}
-
-pub struct Path<'a, T: Ids> {
-	parent: Option<Box<Path<'a, T>>>,
-	id: Option<&'a Id<T>>,
-}
-
-// impl<'a, T: Ids> Path<'a, T> {
-// 	pub(crate) fn new(parent: Option<Path<'a, T>>, id: &'a Id<T>) -> Self {
-// 		Self {
-// 			parent: parent.map(Box::new),
-// 			id: Some(id),
-// 		}
-// 	}
-// }
-
-impl<'a, T: Ids> Iterator for Path<'a, T> {
-	type Item = &'a Id<T>;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		match self.parent.as_mut().map(|p| p.next()).flatten() {
-			Some(id) => Some(id),
-			None => self.id.take(),
 		}
 	}
 }
