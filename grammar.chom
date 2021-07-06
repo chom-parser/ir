@@ -1,0 +1,83 @@
+extern ident
+extern label
+extern int
+extern char
+extern string
+
+# Identifier.
+regexp IDENT: ident = '%'[a-zA-Z0-9]+
+regexp LABEL: label = '\''[a-zA-Z0-9]*
+regexp INT: int = [0-9]+
+regexp CHAR: char = '\'' [^']+ '\''
+regexp STRING: string = '"' ([^"] | '\\"')* '"'
+
+type constant =
+  | int: INT
+  | char: CHAR
+  | range: 'range' CHAR CHAR
+  | string: STRING
+
+# Expression.
+type expr =
+  | constant: <constant>
+  | get: IDENT
+  | get_field: 'field' IDENT 'of' <expr>
+  | get_tuple_field: 'arg' INT 'of' <expr>
+  | set: 'let' IDENT '=' <expr> 'in' <expr>
+  | new: 'new' <path> <option <variant>> <option <args>>
+  | some: 'some' <expr>
+  | none: 'none'
+  | ok: 'ok' <expr>
+  | err: 'err' <expr>
+  | error: 'error' <error>
+  | locate: 'locate' <expr> 'into' <expr>
+  | heap: 'heap' <expr>
+  | match: 'match' <expr> 'with' <separated_list <case> ','> 'end'
+  | fixpoint: 'fixpoint' LABEL '(' <separated_list <ident> ','> ')' <expr>
+  | recurse: 'recurse' LABEL '(' <separated_list <ident> ','> ')'
+
+  | peek: 'peek' IDENT 'from' IDENT 'in' <expr>
+  | buffer_parse: 'parse' IDENT 'using' <path>
+  | buffer_iter: 'iterate' IDENT
+  | buffer_clear: 'clear' IDENT
+  | consume: 'consume' IDENT 'then' <expr>
+  
+  | stack_new: 'empty'
+  | stack_push: 'push' <expr> 'on' IDENT 'then' <expr>
+  | stack_pop: 'pop' <expr> 'from' IDENT 'then' <expr>
+  | pattern_unwrap: 'assume' <pattern> '=' <expr> 'in' <expr>
+  | lexer_next: 'pull' IDENT 'from' IDENT 'in' <expr>
+  | position_new: 'nowhere'
+  | position_to_span: 'span' <expr>
+  | span_end: 'after' <expr>
+  | span_opt_transpose: 'transpose' <expr> 'default' <expr>
+  | span_unwrap: 'unwrap' <expr>
+  | span_union: 'merge' <expr> 'and' <expr>
+
+  | write: 'write' STRING <option <args>>
+
+  | unreachable: 'unreachable'
+
+type case = <pattern> '=>' <expr>
+
+type pattern =
+  | any: '_'
+
+type ident = IDENT
+
+type variant = '.' IDENT
+
+type args = '(' <separated_list <expr> ','>
+
+type path =
+  | end: '.'
+  | cons: IDENT '/' <path>
+
+type separated_list <t> sep =
+  | end: '.'
+  | cons: <t> sep <separated_list <t> sep>
+
+type error =
+  | unexpected_char: 'unexpected-char' <expr>
+  | unexpected_token: 'unexpected-token' <expr>
+  | unexpected_node: 'unexpected-node' <expr>
