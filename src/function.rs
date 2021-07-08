@@ -15,33 +15,39 @@ pub enum Owner {
 }
 
 /// Function signature.
-pub enum Signature {
+pub enum Signature<T: Ids> {
 	/// Extern parser used by the lexer to process tokens.
 	/// 
 	/// The given `Ident` is a custom name used to build
 	/// the function's name.
 	ExternParser(Ident),
 
+	/// Undefined character function.
+	/// 
+	/// The given type is the returned error type.
+	UndefinedChar(ty::Expr<T>),
+
 	/// Parser function.
 	/// 
 	/// The first given type is the token type,
 	/// the second is the returned type.
-	Parser(ty::Instance, ty::Instance),
+	Parser(ty::Expr<T>, ty::Expr<T>),
 
 	/// Lexer function.
 	/// 
-	/// The given type is the token type.
-	Lexer(ty::Instance)
+	/// The first type is the token type.
+	/// The second type is the lexing error type.
+	Lexer(ty::Expr<T>, ty::Expr<T>)
 }
 
 pub struct Function<T: Ids> {
 	owner: Owner,
-	signature: Signature,
-	body: Expr<T>
+	signature: Signature<T>,
+	body: Option<Expr<T>>
 }
 
 impl<T: Ids> Function<T> {
-	pub fn new(owner: Owner, signature: Signature, body: Expr<T>) -> Self {
+	pub fn new(owner: Owner, signature: Signature<T>, body: Option<Expr<T>>) -> Self {
 		Self {
 			owner,
 			signature,
@@ -60,11 +66,11 @@ impl<T: Ids> Function<T> {
 		}
 	}
 
-	pub fn signature(&self) -> &Signature {
+	pub fn signature(&self) -> &Signature<T> {
 		&self.signature
 	}
 
-	pub fn body(&self) -> &Expr<T> {
-		&self.body
+	pub fn body(&self) -> Option<&Expr<T>> {
+		self.body.as_ref()
 	}
 }

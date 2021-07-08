@@ -84,6 +84,22 @@ where
 }
 
 impl<T: Ids> Pattern<T> {
+	pub fn none() -> Self {
+		Self::Cons(
+			ty::Ref::Native(ty::Native::Option),
+			0,
+			ConsArgs::Tuple(Vec::new())
+		)
+	}
+
+	pub fn some(pattern: Self) -> Self {
+		Self::Cons(
+			ty::Ref::Native(ty::Native::Option),
+			1,
+			ConsArgs::Tuple(vec![pattern])
+		)
+	}
+
 	pub fn is_union(&self) -> bool {
 		match self {
 			Self::Or(_) => true,

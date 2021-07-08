@@ -8,7 +8,7 @@ use crate::{
 pub enum Segment<'a, T: Ids> {
 	Module(&'a module::Id<T>),
 	Type(ty::Id<T>),
-	Function(&'a function::Signature)
+	Function(&'a function::Signature<T>)
 }
 
 pub struct Path<'a, T: Ids> {

@@ -1,5 +1,4 @@
 use super::{ty, Ids};
-use std::collections::HashSet;
 
 /// Module.
 pub struct Module<T: Ids> {
@@ -12,8 +11,10 @@ pub struct Module<T: Ids> {
 	/// Module's id.
 	id: Id<T>,
 
-	/// Module's roles.
-	roles: HashSet<Role>,
+	/// Is the module extern?
+	/// 
+	/// If `true`, code generators may choose not to render it.
+	is_extern: bool,
 
 	/// Types defined in the module.
 	types: Vec<ty::Ref>,
@@ -25,22 +26,13 @@ pub struct Module<T: Ids> {
 	functions: Vec<u32>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Role {
-	Extern,
-	Ast,
-	Lexer,
-	ParserRoot,
-	ParserSubmodule,
-}
-
 impl<T: Ids> Module<T> {
 	pub fn root() -> Self {
 		Self {
 			index: None,
 			parent: None,
 			id: Id::Root,
-			roles: HashSet::new(),
+			is_extern: false,
 			types: Vec::new(),
 			modules: Vec::new(),
 			functions: Vec::new(),
@@ -52,7 +44,7 @@ impl<T: Ids> Module<T> {
 			index: None,
 			parent: Some(parent),
 			id: Id::Named(name),
-			roles: HashSet::new(),
+			is_extern: false,
 			types: Vec::new(),
 			modules: Vec::new(),
 			functions: Vec::new(),
@@ -76,12 +68,12 @@ impl<T: Ids> Module<T> {
 		&self.id
 	}
 
-	pub fn roles(&self) -> impl '_ + Iterator<Item = Role> {
-		self.roles.iter().cloned()
+	pub fn is_extern(&self) -> bool {
+		self.is_extern
 	}
 
-	pub fn is_extern(&self) -> bool {
-		self.roles.contains(&Role::Extern)
+	pub fn set_extern(&mut self, e: bool) {
+		self.is_extern = e
 	}
 
 	pub fn types(&self) -> impl '_ + Iterator<Item = ty::Ref> {
@@ -94,10 +86,6 @@ impl<T: Ids> Module<T> {
 
 	pub fn functions(&self) -> impl '_ + Iterator<Item = u32> {
 		self.functions.iter().cloned()
-	}
-
-	pub fn add_role(&mut self, role: Role) {
-		self.roles.insert(role);
 	}
 
 	pub(crate) fn add_type(&mut self, ty: ty::Ref) {

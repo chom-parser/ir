@@ -1,7 +1,6 @@
 use crate::{ty, Constant, Ids, Pattern};
 
 pub enum Error<T: Ids> {
-	UnexpectedChar(Box<Expr<T>>),
 	UnexpectedToken(Box<Expr<T>>),
 	UnexpectedNode(Box<Expr<T>>),
 }
@@ -34,8 +33,17 @@ pub enum Expr<T: Ids> {
 	/// Get a structure/enum field of the given value.
 	GetField(Box<Expr<T>>, ty::Ref, u32),
 
-	/// Set the value of the given variable.
+	/// Declare a new variable initialized with the given expression,
+	/// then evaluate the next expression.
+	/// 
+	/// The boolean specifies if the variable is mutable or not
+	/// (if it can/will be updated using the `Update` expression).
 	Let(T::Var, bool, Box<Expr<T>>, Box<Expr<T>>),
+
+	/// Update the given variable.
+	/// 
+	/// It must have first been declared as mutable using `Let`.
+	Update(T::Var, Box<Expr<T>>, Box<Expr<T>>),
 
 	/// Create a new instance of the given type using the given arguments.
 	New(ty::Ref, BuildArgs<T>),
@@ -48,9 +56,6 @@ pub enum Expr<T: Ids> {
 
 	/// Put the given value on the heap.
 	Heap(Box<Expr<T>>),
-
-	/// Error expression.
-	Error(Error<T>),
 
 	/// Pattern matching.
 	Match {
@@ -67,6 +72,9 @@ pub enum Expr<T: Ids> {
 	///
 	/// The value is guaranteed to match the input pattern.
 	LetMatch(Pattern<T>, Box<Expr<T>>, Box<Expr<T>>),
+
+	/// Call the given function.
+	Call(u32, Vec<Expr<T>>),
 
 	/// Tail recursion.
 	///
@@ -104,14 +112,54 @@ pub enum Expr<T: Ids> {
 	/// Write to the output.
 	Write(String, Vec<Expr<T>>),
 
+	/// Error value.
+	Error(Error<T>),
+
 	/// Unreachable expression.
 	Unreachable,
+}
+
+impl<T: Ids> Expr<T> {
+	pub fn none() -> Self {
+		Self::Cons(ty::Ref::Native(ty::Native::Option), 0, BuildArgs::empty())
+	}
+
+	pub fn some(value: Self) -> Self {
+		Self::Cons(ty::Ref::Native(ty::Native::Option), 1, BuildArgs::Tuple(vec![value]))
+	}
+
+	pub fn ok(value: Self) -> Self {
+		Self::Cons(ty::Ref::Native(ty::Native::Result), 0, BuildArgs::Tuple(vec![value]))
+	}
+
+	pub fn err(value: Self) -> Self {
+		Self::Cons(ty::Ref::Native(ty::Native::Result), 1, BuildArgs::Tuple(vec![value]))
+	}
+
+	pub fn heap(value: Self) -> Self {
+		Self::Heap(Box::new(value))
+	}
+
+	pub fn locate(value: Self, span: Self) -> Self {
+		Self::Span(SpanExpr::Locate(Box::new(value), Box::new(span)))
+	}
+
+	pub fn nowhere() -> Self {
+		Self::New(ty::Ref::Native(ty::Native::Span), BuildArgs::empty())
+	}
+
+	pub fn empty_stack() -> Self {
+		Self::New(ty::Ref::Native(ty::Native::Stack), BuildArgs::empty())
+	}
 }
 
 /// Lexer operation.
 pub enum LexerExpr<T: Ids> {
 	/// Peek a character from the source char stream.
 	Peek,
+
+	/// Return that current span stored in the lexer.
+	Span,
 
 	/// Parse the buffer content using the given token parser (given the index of the grammar terminal).
 	Parse(u32),
@@ -133,7 +181,7 @@ impl<T: Ids> LexerExpr<T> {
 	/// that is when an expression is evaluated after the operation.
 	pub fn is_continued(&self) -> bool {
 		match self {
-			Self::Clear(_) | Self::Consume(_) => true,
+			Self::Clear(_) |Self::Consume(_) => true,
 			_ => false,
 		}
 	}
@@ -196,6 +244,17 @@ pub enum SpanExpr<T: Ids> {
 	Merge(Box<Expr<T>>, Box<Expr<T>>),
 }
 
+impl<T: Ids> SpanExpr<T> {
+	/// Checks if the operation is "continued",
+	/// that is when an expression is evaluated after the operation.
+	pub fn is_continued(&self) -> bool {
+		match self {
+			Self::Unwrap(_, _, _, _) => true,
+			_ => false,
+		}
+	}
+}
+
 impl<T: Ids> Expr<T> {
 	/// Checks if the expression is "continued",
 	/// that is when another expression is evaluated after the operation.
@@ -205,9 +264,13 @@ impl<T: Ids> Expr<T> {
 	/// The `Recurse` and `Unreachable` expressions are also considered to be continued.
 	pub fn is_continued(&self) -> bool {
 		match self {
-			Self::Let(_, _, _, _) | Self::Match { .. } | Self::Recurse(_, _) | Self::Unreachable => {
+			Self::Let(_, _, _, _) | Self::Update(_, _, _) | Self::Match { .. } | Self::LetMatch(_, _, _) | Self::Recurse(_, _) | Self::Unreachable => {
 				true
 			}
+			Self::Lexer(_, e) => e.is_continued(),
+			Self::Stream(_, _) => true,
+			Self::Stack(_, _) => true,
+			Self::Span(e) => e.is_continued(),
 			_ => false,
 		}
 	}
@@ -224,6 +287,10 @@ pub enum BuildArgs<T: Ids> {
 }
 
 impl<T: Ids> BuildArgs<T> {
+	pub fn empty() -> Self {
+		BuildArgs::Tuple(Vec::new())
+	}
+
 	pub fn is_empty(&self) -> bool {
 		match self {
 			Self::Tuple(args) => args.is_empty(),

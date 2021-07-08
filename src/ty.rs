@@ -1,4 +1,21 @@
+use derivative::Derivative;
 use crate::Ids;
+
+#[derive(Derivative)]
+#[derivative(Clone, Copy)]
+pub enum Param<T: Ids> {
+	Defined(T::Param),
+	Native(NativeParam)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum NativeParam {
+	/// Value type parameter.
+	Value,
+
+	/// Error type parameter.
+	Error
+}
 
 /// Type definition.
 pub struct Type<T: Ids> {
@@ -9,7 +26,7 @@ pub struct Type<T: Ids> {
 	id: Id<T>,
 
 	/// Parameters.
-	parameters: Vec<T::Param>,
+	parameters: Vec<Param<T>>,
 
 	/// Description.
 	desc: Desc<T>,
@@ -48,6 +65,12 @@ impl<T: Ids> Type<T> {
 				enm.add_variant(Variant::Native(NativeVariant::Some));
 				Desc::Enum(enm)
 			},
+			Native::Result => {
+				let mut enm = Enum::new();
+				enm.add_variant(Variant::Native(NativeVariant::Ok));
+				enm.add_variant(Variant::Native(NativeVariant::Err));
+				Desc::Enum(enm)
+			},
 			_ => Desc::Opaque
 		};
 
@@ -68,7 +91,7 @@ impl<T: Ids> Type<T> {
 		self.id
 	}
 
-	pub fn parameters(&self) -> &[T::Param] {
+	pub fn parameters(&self) -> &[Param<T>] {
 		&self.parameters
 	}
 
@@ -85,6 +108,10 @@ impl<T: Ids> Type<T> {
 			Desc::Enum(enm) => Some(enm),
 			_ => None,
 		}
+	}
+
+	pub fn methods(&self) -> &[u32] {
+		&self.methods
 	}
 
 	pub(crate) fn add_method(&mut self, f: u32) {
@@ -109,7 +136,7 @@ impl<T: Ids> Clone for Id<T> {
 impl<T: Ids> Copy for Id<T> {}
 
 /// Type reference.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Ref {
 	/// Native type provided by the target language.
 	Native(Native),
@@ -122,7 +149,8 @@ pub enum Desc<T: Ids> {
 	Opaque,
 	Enum(Enum<T>),
 	Struct(Struct<T>),
-	TupleStruct(Vec<Expr>),
+	TupleStruct(Vec<Expr<T>>),
+	Lexer
 }
 
 /// Enumerator type.
@@ -180,12 +208,12 @@ pub enum Variant<T: Ids> {
 impl<T: Ids> Variant<T> {
 	pub fn is_empty(&self) -> bool {
 		match self {
-			Self::Native(t) => t.parameters().is_empty(),
+			Self::Native(t) => t.parameters::<T>().is_empty(),
 			Self::Defined(_, desc) => desc.is_empty(),
 		}
 	}
 
-	pub fn tuple_parameters(&self) -> Option<&[Expr]> {
+	pub fn tuple_parameters(&self) -> Option<&[Expr<T>]> {
 		match self {
 			Self::Native(t) => Some(t.parameters()),
 			Self::Defined(_, VariantDesc::Tuple(params)) => Some(params.as_ref()),
@@ -205,7 +233,7 @@ pub enum VariantDesc<T: Ids> {
 	/// The variant contains untagged parameters.
 	///
 	/// The given list is not empty.
-	Tuple(Vec<Expr>),
+	Tuple(Vec<Expr<T>>),
 
 	/// The variant contains only tagged parameters,
 	/// defining a structure.
@@ -213,6 +241,10 @@ pub enum VariantDesc<T: Ids> {
 }
 
 impl<T: Ids> VariantDesc<T> {
+	pub fn empty() -> Self {
+		Self::Tuple(Vec::new())
+	}
+	
 	pub fn len(&self) -> u32 {
 		match self {
 			Self::Tuple(args) => args.len() as u32,
@@ -247,7 +279,7 @@ impl<T: Ids> Struct<T> {
 		&self.fields
 	}
 
-	pub fn add_field(&mut self, id: T::Field, ty: Expr) -> u32 {
+	pub fn add_field(&mut self, id: T::Field, ty: Expr<T>) -> u32 {
 		let field = Field { id, ty };
 		let i = self.fields.len() as u32;
 		self.fields.push(field);
@@ -257,26 +289,44 @@ impl<T: Ids> Struct<T> {
 
 pub struct Field<T: Ids> {
 	pub id: T::Field,
-	pub ty: Expr,
+	pub ty: Expr<T>,
 }
 
-pub struct Instance {
-	pub ty: Ref,
-	pub args: Vec<Instance>
-}
+// pub struct Instance {
+// 	pub ty: Ref,
+// 	pub args: Vec<Instance>
+// }
 
 /// Type expression.
-#[derive(Clone)]
-pub enum Expr {
+#[derive(Derivative)]
+#[derivative(Clone)]
+pub enum Expr<T: Ids> {
 	/// Type variable.
-	Var(u32),
+	Var(Param<T>),
 
 	/// Type instance.
-	Instance(Ref, Vec<Expr>),
+	Instance(Ref, Vec<Expr<T>>),
+}
+
+impl<T: Ids> Expr<T> {
+	pub fn as_reference(&self) -> Option<Ref> {
+		match self {
+			Self::Instance(r, _) => Some(*r),
+			_ => None
+		}
+	}
+
+	pub fn heap(e: Expr<T>) -> Self {
+		Self::Instance(Ref::Native(Native::Heap), vec![e])
+	}
+
+	pub fn locate(e: Expr<T>) -> Self {
+		Self::Instance(Ref::Native(Native::Loc), vec![e])
+	}
 }
 
 /// Native type provided by the target language.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Native {
 	/// Unit type.
 	Unit,
@@ -289,18 +339,24 @@ pub enum Native {
 	/// Optional type.
 	Option,
 
+	/// Result type.
+	Result,
+
 	/// List type.
 	///
 	/// In Rust, this will generally be translated into `Vec`.
 	List,
 
+	/// Position.
+	Position,
+
+	/// Span.
+	Span,
+
 	/// Located type.
 	///
 	/// In Rust, this will generally be translated into `::source_span::Loc<T>`.
 	Loc,
-
-	/// Lexer type.
-	Lexer,
 
 	/// Stack.
 	Stack,
@@ -316,11 +372,11 @@ pub enum NativeVariant {
 }
 
 impl NativeVariant {
-	pub fn parameters(&self) -> &[Expr] {
+	pub fn parameters<T: Ids>(&self) -> &[Expr<T>] {
 		match self {
-			Self::Some => &[Expr::Var(0)],
-			Self::Ok => &[Expr::Var(0)],
-			Self::Err => &[Expr::Var(1)],
+			Self::Some => &[Expr::Var(Param::Native(NativeParam::Value))],
+			Self::Ok => &[Expr::Var(Param::Native(NativeParam::Value))],
+			Self::Err => &[Expr::Var(Param::Native(NativeParam::Error))],
 			_ => &[],
 		}
 	}
