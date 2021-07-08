@@ -11,6 +11,8 @@ pub mod pattern;
 pub mod function;
 pub mod ty;
 
+pub mod eval;
+
 pub use constant::Constant;
 pub use expr::Expr;
 pub use ident::Ident;
@@ -191,7 +193,7 @@ impl<T: Ids> Context<T> {
 /// Types used as identifiers.
 pub trait Ids {
 	/// Const variable identifier type.
-	type Var: Copy;
+	type Var: Copy + PartialEq + Eq + Hash;
 
 	/// Module identifier type.
 	type Module: Copy;

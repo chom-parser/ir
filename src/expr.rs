@@ -31,7 +31,7 @@ pub enum Expr<T: Ids> {
 	Get(Var<T>),
 
 	/// Get a structure/enum field of the given value.
-	GetField(Box<Expr<T>>, ty::Ref, u32),
+	GetField(T::Var, ty::Ref, u32),
 
 	/// Declare a new variable initialized with the given expression,
 	/// then evaluate the next expression.

@@ -136,13 +136,24 @@ impl<T: Ids> Clone for Id<T> {
 impl<T: Ids> Copy for Id<T> {}
 
 /// Type reference.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ref {
 	/// Native type provided by the target language.
 	Native(Native),
 
 	/// Defined type.
 	Defined(u32),
+}
+
+impl Ref {
+	/// Checks if an instance of the given type may be copied
+	/// iff its parameter instances are can also be copied.
+	pub fn is_copiable(&self) -> bool {
+		match self {
+			Self::Native(n) => n.is_copiable(),
+			Self::Defined(_) => false
+		}
+	}
 }
 
 pub enum Desc<T: Ids> {
@@ -326,7 +337,7 @@ impl<T: Ids> Expr<T> {
 }
 
 /// Native type provided by the target language.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Native {
 	/// Unit type.
 	Unit,
@@ -360,6 +371,17 @@ pub enum Native {
 
 	/// Stack.
 	Stack,
+}
+
+impl Native {
+	/// Checks if an instance of the given type may be copied
+	/// iff its parameter instances are can also be copied.
+	pub fn is_copiable(&self) -> bool {
+		match self {
+			Self::Unit | Self::Option | Self::Result | Self::Position | Self::Span => true,
+			_ => false
+		}
+	}
 }
 
 /// Native enum variants.
