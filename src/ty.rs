@@ -217,6 +217,13 @@ pub enum Variant<T: Ids> {
 }
 
 impl<T: Ids> Variant<T> {
+	pub fn len(&self) -> u32 {
+		match self {
+			Self::Native(t) => t.parameters::<T>().len() as u32,
+			Self::Defined(_, desc) => desc.len(),
+		}
+	}
+
 	pub fn is_empty(&self) -> bool {
 		match self {
 			Self::Native(t) => t.parameters::<T>().is_empty(),

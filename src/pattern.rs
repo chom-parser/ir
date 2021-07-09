@@ -1,4 +1,4 @@
-use crate::{expr, ty, Constant, Expr, Ids};
+use crate::{ty, Constant, Expr, Ids};
 
 /// Pattern.
 pub enum Pattern<T: Ids> {
@@ -15,8 +15,8 @@ pub enum Pattern<T: Ids> {
 	///
 	/// The first parameter is the type id.
 	/// The second is the variant index.
-	/// The third is the inner pattern if any.
-	Cons(ty::Ref, u32, ConsArgs<T>),
+	/// The third is the inner patterns.
+	Cons(ty::Ref, u32, Vec<Pattern<T>>),
 
 	/// Union.
 	Or(Vec<Pattern<T>>),
@@ -38,32 +38,27 @@ where
 	}
 }
 
-pub enum ConsArgs<T: Ids> {
-	Tuple(Vec<Pattern<T>>),
-	Struct(Vec<Binding<T>>),
-}
+// impl<T: Ids> Clone for ConsArgs<T>
+// where
+// 	T::Var: Clone,
+// 	T::Field: Clone,
+// {
+// 	fn clone(&self) -> Self {
+// 		match self {
+// 			Self::Tuple(args) => Self::Tuple(args.clone()),
+// 			Self::Struct(bindings) => Self::Struct(bindings.clone()),
+// 		}
+// 	}
+// }
 
-impl<T: Ids> Clone for ConsArgs<T>
-where
-	T::Var: Clone,
-	T::Field: Clone,
-{
-	fn clone(&self) -> Self {
-		match self {
-			Self::Tuple(args) => Self::Tuple(args.clone()),
-			Self::Struct(bindings) => Self::Struct(bindings.clone()),
-		}
-	}
-}
-
-impl<T: Ids> ConsArgs<T> {
-	pub fn is_empty(&self) -> bool {
-		match self {
-			Self::Tuple(args) => args.is_empty(),
-			Self::Struct(bindings) => bindings.is_empty(),
-		}
-	}
-}
+// impl<T: Ids> ConsArgs<T> {
+// 	pub fn is_empty(&self) -> bool {
+// 		match self {
+// 			Self::Tuple(args) => args.is_empty(),
+// 			Self::Struct(bindings) => bindings.is_empty(),
+// 		}
+// 	}
+// }
 
 pub struct Binding<T: Ids> {
 	pub id: T::Field,
@@ -88,7 +83,7 @@ impl<T: Ids> Pattern<T> {
 		Self::Cons(
 			ty::Ref::Native(ty::Native::Option),
 			0,
-			ConsArgs::Tuple(Vec::new())
+			Vec::new()
 		)
 	}
 
@@ -96,7 +91,7 @@ impl<T: Ids> Pattern<T> {
 		Self::Cons(
 			ty::Ref::Native(ty::Native::Option),
 			1,
-			ConsArgs::Tuple(vec![pattern])
+			vec![pattern]
 		)
 	}
 
@@ -112,9 +107,12 @@ impl<T: Ids> Pattern<T> {
 			Self::Any => false,
 			Self::Bind(_) => true,
 			Self::Literal(_) => false,
-			Self::Cons(_, _, args) => match args {
-				ConsArgs::Tuple(args) => args.iter().any(|a| a.is_bound()),
-				ConsArgs::Struct(bindings) => bindings.iter().any(|b| b.pattern.is_bound()),
+			Self::Cons(_, _, args) => {
+				args.iter().any(|a| a.is_bound())
+				// match args {
+				// 	ConsArgs::Tuple(args) => args.iter().any(|a| a.is_bound()),
+				// 	ConsArgs::Struct(bindings) => bindings.iter().any(|b| b.pattern.is_bound()),
+				// }
 			},
 			Self::Or(_) => false,
 		}
@@ -130,20 +128,21 @@ impl<T: Ids> Pattern<T> {
 			Self::Any => Self::Bind(f()),
 			Self::Bind(id) => Self::Bind(id.clone()),
 			Self::Cons(ty, v, args) => {
-				let args = match args {
-					ConsArgs::Tuple(args) => {
-						ConsArgs::Tuple(args.iter().map(|p| p.bind_any(f)).collect())
-					}
-					ConsArgs::Struct(bindings) => ConsArgs::Struct(
-						bindings
-							.iter()
-							.map(|b| Binding {
-								id: b.id.clone(),
-								pattern: b.pattern.bind_any(f),
-							})
-							.collect(),
-					),
-				};
+				let args = args.iter().map(|p| p.bind_any(f)).collect();
+				// let args = match args {
+				// 	ConsArgs::Tuple(args) => {
+				// 		ConsArgs::Tuple(args.iter().map(|p| p.bind_any(f)).collect())
+				// 	}
+				// 	ConsArgs::Struct(bindings) => ConsArgs::Struct(
+				// 		bindings
+				// 			.iter()
+				// 			.map(|b| Binding {
+				// 				id: b.id.clone(),
+				// 				pattern: b.pattern.bind_any(f),
+				// 			})
+				// 			.collect(),
+				// 	),
+				// };
 				Self::Cons(*ty, *v, args)
 			}
 			Self::Literal(c) => Self::Literal(c.clone()),
@@ -161,20 +160,21 @@ impl<T: Ids> Pattern<T> {
 			Self::Any => f(None),
 			Self::Bind(id) => f(Some(id.clone())),
 			Self::Cons(ty, v, args) => {
-				let args = match args {
-					ConsArgs::Tuple(args) => {
-						expr::BuildArgs::Tuple(args.iter().map(|p| p.as_expr(f)).collect())
-					}
-					ConsArgs::Struct(bindings) => expr::BuildArgs::Struct(
-						bindings
-							.iter()
-							.map(|b| expr::Binding {
-								id: b.id.clone(),
-								expr: b.pattern.as_expr(f),
-							})
-							.collect(),
-					),
-				};
+				let args = args.iter().map(|p| p.as_expr(f)).collect();
+				// let args = match args {
+				// 	ConsArgs::Tuple(args) => {
+				// 		args.iter().map(|p| p.as_expr(f)).collect()
+				// 	}
+				// 	ConsArgs::Struct(bindings) => expr::BuildArgs::Struct(
+				// 		bindings
+				// 			.iter()
+				// 			.map(|b| expr::Binding {
+				// 				id: b.id.clone(),
+				// 				expr: b.pattern.as_expr(f),
+				// 			})
+				// 			.collect(),
+				// 	),
+				// };
 				Expr::Cons(*ty, *v, args)
 			}
 			Self::Literal(c) => Expr::Literal(c.clone()),

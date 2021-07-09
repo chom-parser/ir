@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use crate::{
 	Ids,
+	Context,
 	Constant,
 	ty,
 	Expr,
-	expr::Var
+	expr::{
+		Var
+	}
 };
 
 pub enum Error {
@@ -34,7 +37,20 @@ pub enum Error {
 	UndefinedField(u32),
 
 	/// Trying to update non mutable variable.
-	NotMutable
+	NotMutable,
+
+	/// Trying to instanciate a non-struct type.
+	NotAStructType(ty::Ref),
+
+	/// Trying to instanciate a non-enum type.
+	NotAnEnumType(ty::Ref),
+
+	/// The number of given field at instanciation
+	/// does not match the type definition.
+	/// 
+	/// The first parameter is the number of provided values.
+	/// The second is the number of expected values.
+	InvalidFieldCount(u32, u32)
 }
 
 #[derive(Clone)]
@@ -112,7 +128,9 @@ impl Variable {
 	}
 }
 
-pub struct Environement<T: Ids> {
+pub struct Environement<'a, T: Ids> {
+	context: &'a Context<T>,
+
 	/// The current variables values.
 	vars: HashMap<T::Var, Variable>,
 
@@ -120,7 +138,7 @@ pub struct Environement<T: Ids> {
 	this: Option<MaybeMovedValue>
 }
 
-impl<T: Ids> Environement<T> {
+impl<'a, T: Ids> Environement<'a, T> {
 	pub fn eval(&mut self, e: &Expr<T>) -> Result<Value, Error> {
 		match e {
 			Expr::Literal(c) => Ok(Value::Constant(c.clone())),
@@ -142,11 +160,8 @@ impl<T: Ids> Environement<T> {
 					Value::Instance(value_ty_ref, data) => {
 						if value_ty_ref == ty_ref {
 							match data {
-								InstanceData::TupleStruct(args) => {
-									args.get_mut(index as usize).ok_or(Error::UndefinedField(index))?.copy_or_move()
-								}
 								InstanceData::Struct(bindings) => {
-									bindings.get_mut(index as usize).ok_or(Error::UndefinedField(index))?.value.copy_or_move()
+									bindings.get_mut(index as usize).ok_or(Error::UndefinedField(index))?.copy_or_move()
 								}
 								_ => Err(Error::GetFieldFromNonStruct)
 							}
@@ -167,6 +182,59 @@ impl<T: Ids> Environement<T> {
 				self.vars.get_mut(x).ok_or(Error::UnboundVariable)?.update(value)?;
 				self.eval(next)
 			},
+			Expr::New(ty_ref, args) => {
+				let ty = self.context.ty(*ty_ref).unwrap();
+				let len = args.len() as u32;
+				let expected_len = match ty.desc() {
+					ty::Desc::Struct(strct) => strct.len(),
+					ty::Desc::TupleStruct(args) => args.len() as u32,
+					_ => return Err(Error::NotAStructType(*ty_ref))
+				};
+
+				if len == expected_len {
+					let mut eargs = Vec::new();
+					for a in args {
+						eargs.push(MaybeMovedValue::new(self.eval(a)?));
+						// TODO check types.
+					}
+
+					Ok(Value::Instance(*ty_ref, InstanceData::Struct(eargs)))
+				} else {
+					Err(Error::InvalidFieldCount(expected_len, len))
+				}
+			},
+			Expr::Cons(ty_ref, index, args) => {
+				let ty = self.context.ty(*ty_ref).unwrap();
+				match ty.desc() {
+					ty::Desc::Enum(enm) => {
+						let variant = enm.variant(*index).expect("unknown variant");
+						let len = args.len() as u32;
+						let expected_len = variant.len();
+
+						if len == expected_len {
+							let mut eargs = Vec::new();
+							for a in args {
+								eargs.push(MaybeMovedValue::new(self.eval(a)?));
+								// TODO check types.
+							}
+		
+							Ok(Value::Instance(*ty_ref, InstanceData::EnumVariant(*index, eargs)))
+						} else {
+							Err(Error::InvalidFieldCount(expected_len, len))
+						}
+					},
+					_ => Err(Error::NotAnEnumType(*ty_ref))
+				}
+			}
+			Expr::Heap(e) => self.eval(e),
+			Expr::Match { expr, cases } => {
+				let value = self.eval(expr)?;
+
+				// for case in cases {
+				// 	// ...
+				// }
+				panic!("TODO")
+			}
 			_ => panic!("TODO")
 		}
 	}
@@ -192,44 +260,15 @@ impl Value {
 
 #[derive(Clone)]
 pub enum InstanceData {
-	EnumVariant(u32, VariantData),
-	Struct(Vec<Binding>),
-	TupleStruct(Vec<MaybeMovedValue>)
+	EnumVariant(u32, Vec<MaybeMovedValue>),
+	Struct(Vec<MaybeMovedValue>)
 }
 
 impl InstanceData {
 	pub fn is_copiable(&self) -> bool {
 		match self {
-			Self::EnumVariant(_, data) => data.is_copiable(),
-			Self::Struct(bindings) => bindings.iter().all(|b| b.is_copiable()),
-			Self::TupleStruct(args) => args.iter().all(|a| a.is_copiable())
-		}
-	}
-}
-
-#[derive(Clone)]
-pub enum VariantData {
-	Tuple(Vec<MaybeMovedValue>),
-	Struct(Vec<Binding>)
-}
-
-impl VariantData {
-	pub fn is_copiable(&self) -> bool {
-		match self {
-			Self::Tuple(args) => args.iter().all(|a| a.is_copiable()),
+			Self::EnumVariant(_, args) => args.iter().all(|a| a.is_copiable()),
 			Self::Struct(bindings) => bindings.iter().all(|b| b.is_copiable())
 		}
-	}
-}
-
-#[derive(Clone)]
-pub struct Binding {
-	id: u32,
-	value: MaybeMovedValue
-}
-
-impl Binding {
-	pub fn is_copiable(&self) -> bool {
-		self.value.is_copiable()
 	}
 }

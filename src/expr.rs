@@ -46,13 +46,13 @@ pub enum Expr<T: Ids> {
 	Update(T::Var, Box<Expr<T>>, Box<Expr<T>>),
 
 	/// Create a new instance of the given type using the given arguments.
-	New(ty::Ref, BuildArgs<T>),
+	New(ty::Ref, Vec<Expr<T>>),
 
 	/// Construct an enum variant.
 	///
 	/// The first parameter is the enum type index,
 	/// the second the variant index.
-	Cons(ty::Ref, u32, BuildArgs<T>),
+	Cons(ty::Ref, u32, Vec<Expr<T>>),
 
 	/// Put the given value on the heap.
 	Heap(Box<Expr<T>>),
@@ -121,19 +121,19 @@ pub enum Expr<T: Ids> {
 
 impl<T: Ids> Expr<T> {
 	pub fn none() -> Self {
-		Self::Cons(ty::Ref::Native(ty::Native::Option), 0, BuildArgs::empty())
+		Self::Cons(ty::Ref::Native(ty::Native::Option), 0, Vec::new())
 	}
 
 	pub fn some(value: Self) -> Self {
-		Self::Cons(ty::Ref::Native(ty::Native::Option), 1, BuildArgs::Tuple(vec![value]))
+		Self::Cons(ty::Ref::Native(ty::Native::Option), 1, vec![value])
 	}
 
 	pub fn ok(value: Self) -> Self {
-		Self::Cons(ty::Ref::Native(ty::Native::Result), 0, BuildArgs::Tuple(vec![value]))
+		Self::Cons(ty::Ref::Native(ty::Native::Result), 0, vec![value])
 	}
 
 	pub fn err(value: Self) -> Self {
-		Self::Cons(ty::Ref::Native(ty::Native::Result), 1, BuildArgs::Tuple(vec![value]))
+		Self::Cons(ty::Ref::Native(ty::Native::Result), 1, vec![value])
 	}
 
 	pub fn heap(value: Self) -> Self {
@@ -145,11 +145,11 @@ impl<T: Ids> Expr<T> {
 	}
 
 	pub fn nowhere() -> Self {
-		Self::New(ty::Ref::Native(ty::Native::Span), BuildArgs::empty())
+		Self::New(ty::Ref::Native(ty::Native::Span), Vec::new())
 	}
 
 	pub fn empty_stack() -> Self {
-		Self::New(ty::Ref::Native(ty::Native::Stack), BuildArgs::empty())
+		Self::New(ty::Ref::Native(ty::Native::Stack), Vec::new())
 	}
 }
 
@@ -281,25 +281,25 @@ pub struct MatchCase<T: Ids> {
 	pub expr: Expr<T>,
 }
 
-pub enum BuildArgs<T: Ids> {
-	Tuple(Vec<Expr<T>>),
-	Struct(Vec<Binding<T>>),
-}
+// pub enum BuildArgs<T: Ids> {
+// 	Tuple(Vec<Expr<T>>),
+// 	Struct(Vec<Binding<T>>),
+// }
 
-impl<T: Ids> BuildArgs<T> {
-	pub fn empty() -> Self {
-		BuildArgs::Tuple(Vec::new())
-	}
+// impl<T: Ids> BuildArgs<T> {
+// 	pub fn empty() -> Self {
+// 		BuildArgs::Tuple(Vec::new())
+// 	}
 
-	pub fn is_empty(&self) -> bool {
-		match self {
-			Self::Tuple(args) => args.is_empty(),
-			Self::Struct(bindings) => bindings.is_empty(),
-		}
-	}
-}
+// 	pub fn is_empty(&self) -> bool {
+// 		match self {
+// 			Self::Tuple(args) => args.is_empty(),
+// 			Self::Struct(bindings) => bindings.is_empty(),
+// 		}
+// 	}
+// }
 
-pub struct Binding<T: Ids> {
-	pub id: T::Field,
-	pub expr: Expr<T>,
-}
+// pub struct Binding<T: Ids> {
+// 	pub id: T::Field,
+// 	pub expr: Expr<T>,
+// }
