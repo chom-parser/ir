@@ -1,3 +1,4 @@
+use derivative::Derivative;
 use crate::{ty, Constant, Ids, Pattern};
 
 pub enum Error<T: Ids> {
@@ -5,18 +6,11 @@ pub enum Error<T: Ids> {
 	UnexpectedNode(Box<Expr<T>>),
 }
 
+#[derive(Derivative)]
+#[derivative(Clone, Copy, PartialEq, Eq)]
 pub enum Var<T: Ids> {
 	This,
 	Defined(T::Var)
-}
-
-impl<T: Ids> Clone for Var<T> {
-	fn clone(&self) -> Self {
-		match self {
-			Self::This => Self::This,
-			Self::Defined(v) => Self::Defined(*v)
-		}
-	}
 }
 
 /// Expression.
@@ -73,8 +67,9 @@ pub enum Expr<T: Ids> {
 	/// The value is guaranteed to match the input pattern.
 	LetMatch(Pattern<T>, Box<Expr<T>>, Box<Expr<T>>),
 
-	/// Call the given function.
-	Call(u32, Vec<Expr<T>>),
+	/// Call the given function with an optional object
+	/// that will serve as `this`.
+	Call(u32, Option<(T::Var, bool)>, Vec<Expr<T>>),
 
 	/// Tail recursion.
 	///
@@ -161,9 +156,6 @@ pub enum LexerExpr<T: Ids> {
 	/// Return that current span stored in the lexer.
 	Span,
 
-	/// Parse the buffer content using the given token parser (given the index of the grammar terminal).
-	Parse(u32),
-
 	/// Creates an iterator from the characters of the buffer.
 	Chars,
 
@@ -181,8 +173,8 @@ impl<T: Ids> LexerExpr<T> {
 	/// that is when an expression is evaluated after the operation.
 	pub fn is_continued(&self) -> bool {
 		match self {
-			Self::Clear(_) |Self::Consume(_) => true,
-			_ => false,
+			Self::Clear(_) | Self::Consume(_) => true,
+			_ => false
 		}
 	}
 }

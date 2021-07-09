@@ -20,24 +20,39 @@ pub enum Signature<T: Ids> {
 	/// 
 	/// The given `Ident` is a custom name used to build
 	/// the function's name.
-	ExternParser(Ident),
+	ExternParser(T::Var, Ident),
 
 	/// Undefined character function.
 	/// 
 	/// The given type is the returned error type.
-	UndefinedChar(ty::Expr<T>),
+	UndefinedChar(T::Var, ty::Expr<T>),
 
 	/// Parser function.
 	/// 
 	/// The first given type is the token type,
 	/// the second is the returned type.
-	Parser(ty::Expr<T>, ty::Expr<T>),
+	Parser(T::Var, ty::Expr<T>, ty::Expr<T>),
 
 	/// Lexer function.
 	/// 
 	/// The first type is the token type.
 	/// The second type is the lexing error type.
 	Lexer(ty::Expr<T>, ty::Expr<T>)
+}
+
+impl<T: Ids> Signature<T> {
+	pub fn arguments(&self) -> &[T::Var] {
+		match self {
+			Self::ExternParser(x, _) => std::slice::from_ref(x),
+			Self::UndefinedChar(x, _) => std::slice::from_ref(x),
+			Self::Parser(x, _, _) => std::slice::from_ref(x),
+			Self::Lexer(_, _) => &[]
+		}
+	}
+
+	pub fn arity(&self) -> u32 {
+		self.arguments().len() as u32
+	}
 }
 
 pub struct Function<T: Ids> {

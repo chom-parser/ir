@@ -114,7 +114,7 @@ impl<T: Ids> Pattern<T> {
 				// 	ConsArgs::Struct(bindings) => bindings.iter().any(|b| b.pattern.is_bound()),
 				// }
 			},
-			Self::Or(_) => false,
+			Self::Or(patterns) => patterns.iter().any(|p| p.is_bound()),
 		}
 	}
 
