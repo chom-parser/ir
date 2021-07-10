@@ -104,8 +104,9 @@ pub enum Expr<T: Ids> {
 	/// Span-related expressions.
 	Span(SpanExpr<T>),
 
-	/// Write to the output.
-	Write(String, Vec<Expr<T>>),
+	/// Write the given string to the output,
+	/// and then evaluate the given expression.
+	Write(Var<T>, String, Box<Expr<T>>),
 
 	/// Error value.
 	Error(Error<T>),

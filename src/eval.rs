@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+	collections::HashMap,
+	iter::Peekable
+};
 use source_span::{
 	Position,
 	Span,
@@ -22,6 +25,8 @@ use crate::{
 };
 
 pub enum Error {
+	IO(std::io::Error),
+
 	/// No `this`.
 	NoThis,
 
@@ -83,41 +88,43 @@ pub enum Error {
 
 	ImmutableThis,
 
-	UnreachableReached
+	UnreachableReached,
+
+	EmptyStack
 }
 
-pub enum MaybeMovedValue {
-	Here(Value),
+pub enum MaybeMovedValue<'v> {
+	Here(Value<'v>),
 	Moved
 }
 
-impl MaybeMovedValue {
-	pub fn new(value: Value) -> Self {
+impl<'v> MaybeMovedValue<'v> {
+	pub fn new(value: Value<'v>) -> Self {
 		MaybeMovedValue::Here(value)
 	}
 
-	pub fn unwrap(self) -> Result<Value, Error> {
+	pub fn unwrap(self) -> Result<Value<'v>, Error> {
 		match self {
 			Self::Here(v) => Ok(v),
 			Self::Moved => Err(Error::ValueMoved)
 		}
 	}
 
-	pub fn borrow(&self) -> Result<&Value, Error> {
+	pub fn borrow(&self) -> Result<&Value<'v>, Error> {
 		match self {
 			Self::Here(v) => Ok(v),
 			Self::Moved => Err(Error::ValueMoved)
 		}
 	}
 
-	pub fn borrow_mut(&mut self) -> Result<&mut Value, Error> {
+	pub fn borrow_mut(&mut self) -> Result<&mut Value<'v>, Error> {
 		match self {
 			Self::Here(v) => Ok(v),
 			Self::Moved => Err(Error::ValueMoved)
 		}
 	}
 
-	pub fn copy_or_move(&mut self) -> Result<Value, Error> {
+	pub fn copy_or_move(&mut self) -> Result<Value<'v>, Error> {
 		match self {
 			Self::Here(value) => {
 				if value.is_copiable() {
@@ -144,20 +151,20 @@ impl MaybeMovedValue {
 	}
 }
 
-pub struct Variable {
+pub struct Variable<'v> {
 	mutable: bool,
-	value: MaybeMovedValue
+	value: MaybeMovedValue<'v>
 }
 
-impl Variable {
-	pub fn new(value: Value, mutable: bool) -> Self {
+impl<'v> Variable<'v> {
+	pub fn new(value: Value<'v>, mutable: bool) -> Self {
 		Self {
 			mutable,
 			value: MaybeMovedValue::new(value)
 		}
 	}
 
-	pub fn update(&mut self, new_value: Value) -> Result<(), Error> {
+	pub fn update(&mut self, new_value: Value<'v>) -> Result<(), Error> {
 		if self.mutable {
 			self.value = MaybeMovedValue::new(new_value);
 			Ok(())
@@ -167,7 +174,7 @@ impl Variable {
 	}
 }
 
-pub struct Frame<'e, T: Ids> {
+pub struct Frame<'v, 'e, T: Ids> {
 	label: T::Label,
 
 	args: Vec<Var<T>>,
@@ -175,10 +182,10 @@ pub struct Frame<'e, T: Ids> {
 	expr: &'e Expr<T>,
 
 	/// Variables local to the frame.
-	vars: HashMap<T::Var, Variable>,
+	vars: HashMap<T::Var, Variable<'v>>,
 }
 
-impl<'e, T: Ids> Frame<'e, T> {
+impl<'v, 'e, T: Ids> Frame<'v, 'e, T> {
 	pub fn new(label: T::Label, args: Vec<Var<T>>, expr: &'e Expr<T>) -> Self {
 		Self {
 			label,
@@ -193,20 +200,20 @@ impl<'e, T: Ids> Frame<'e, T> {
 	}
 }
 
-pub enum Borrowed<'a> {
-	Const(&'a Value),
-	Mut(&'a mut Value)
+pub enum Borrowed<'a, 'v> {
+	Const(&'a Value<'v>),
+	Mut(&'a mut Value<'v>)
 }
 
-impl<'a> Borrowed<'a> {
-	pub fn borrow(&self) -> &Value {
+impl<'a, 'v> Borrowed<'a, 'v> {
+	pub fn borrow(&self) -> &Value<'v> {
 		match self {
 			Self::Const(v) => v,
 			Self::Mut(v) => v
 		}
 	}
 
-	pub fn borrow_mut(&mut self) -> Result<&mut Value, Error> {
+	pub fn borrow_mut(&mut self) -> Result<&mut Value<'v>, Error> {
 		match self {
 			Self::Mut(v) => Ok(v),
 			Self::Const(_) => Err(Error::ImmutableThis)
@@ -214,20 +221,21 @@ impl<'a> Borrowed<'a> {
 	}
 }
 
-pub struct Environement<'a, 'e, T: Ids> {
+pub struct Environement<'a, 'v, 'e, T: Ids> {
+	/// Context.
 	context: &'a Context<T>,
 
 	/// The current variables values.
-	vars: HashMap<T::Var, Variable>,
+	vars: HashMap<T::Var, Variable<'v>>,
 
 	/// The current `Var::This`.
-	this: Option<Borrowed<'a>>,
+	this: Option<Borrowed<'a, 'v>>,
 
 	/// Stack.
-	stack: Vec<Frame<'e, T>>
+	stack: Vec<Frame<'v, 'e, T>>
 }
 
-impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
+impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 	pub fn new(context: &'a Context<T>) -> Self {
 		Self {
 			context,
@@ -237,7 +245,7 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 		}
 	}
 
-	pub fn get(&self, x: T::Var) -> Result<&Variable, Error> {
+	pub fn get(&self, x: T::Var) -> Result<&Variable<'v>, Error> {
 		for frame in self.stack.iter().rev() {
 			if let Some(v) = frame.vars.get(&x) {
 				return Ok(v)
@@ -250,14 +258,14 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 		}
 	}
 
-	pub fn borrow(&self, x: Var<T>) -> Result<&Value, Error> {
+	pub fn borrow(&self, x: Var<T>) -> Result<&Value<'v>, Error> {
 		match x {
 			Var::This => Ok(self.this.as_ref().ok_or(Error::NoThis)?.borrow()),
 			Var::Defined(x) => self.get(x)?.value.borrow()
 		}
 	}
 
-	pub fn get_mut(&mut self, x: T::Var) -> Result<&mut Variable, Error> {
+	pub fn get_mut(&mut self, x: T::Var) -> Result<&mut Variable<'v>, Error> {
 		for frame in self.stack.iter_mut().rev() {
 			if let Some(v) = frame.vars.get_mut(&x) {
 				return Ok(v)
@@ -270,14 +278,14 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 		}
 	}
 
-	pub fn borrow_mut(&mut self, x: Var<T>) -> Result<&mut Value, Error> {
+	pub fn borrow_mut(&mut self, x: Var<T>) -> Result<&mut Value<'v>, Error> {
 		match x {
 			Var::This => self.this.as_mut().ok_or(Error::NoThis)?.borrow_mut(),
 			Var::Defined(x) => self.get_mut(x)?.value.borrow_mut()
 		}
 	}
 
-	pub fn bind(&mut self, x: T::Var, v: Variable) {
+	pub fn bind(&mut self, x: T::Var, v: Variable<'v>) {
 		if let Some(frame) = self.stack.last_mut() {
 			frame.vars.insert(x, v);
 		} else {
@@ -285,7 +293,7 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 		}
 	}
 
-	pub fn eval(&mut self, e: &'e Expr<T>) -> Result<Value, Error> {
+	pub fn eval(&mut self, e: &'e Expr<T>) -> Result<Value<'v>, Error> {
 		match e {
 			Expr::Literal(c) => Ok(Value::Constant(c.clone())),
 			Expr::Get(v) => {
@@ -440,7 +448,7 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 			Expr::Lexer(lexer, e) => {
 				match e {
 					LexerExpr::Peek => {
-						let lexer = self.borrow(*lexer)?.as_lexer()?;
+						let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
 						Ok(lexer.peek())
 					}
 					LexerExpr::Span => {
@@ -538,8 +546,10 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 					}
 				}
 			}
-			Expr::Write(name, args) => {
-				panic!("TODO")
+			Expr::Write(output, string, next) => {
+				let output = self.borrow_mut(*output)?.as_output_mut()?;
+				output.write_all(string.as_bytes()).map_err(Error::IO)?;
+				self.eval(next)
 			}
 			Expr::Error(e) => {
 				Ok(Value::Error(match e {
@@ -555,7 +565,7 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 		}
 	}
 
-	pub fn let_match(&mut self, value: Value, pattern: &Pattern<T>) -> Result<(), Error> {
+	pub fn let_match(&mut self, value: Value<'v>, pattern: &Pattern<T>) -> Result<(), Error> {
 		match (pattern, value) {
 			(Pattern::Any, _) => (),
 			(Pattern::Bind(x), value) => { self.bind(*x, Variable::new(value, false)); },
@@ -601,24 +611,41 @@ impl<'a, 'e, T: Ids> Environement<'a, 'e, T> {
 }
 
 /// Value.
-pub enum Value {
+pub enum Value<'v> {
 	Constant(Constant),
-	Instance(ty::Ref, InstanceData),
+	Instance(ty::Ref, InstanceData<'v>),
 	Position(Position),
 	Span(Span),
-	Loc(Loc<Box<Value>>),
-	Lexer(Lexer),
-	Stream(Stream),
-	Stack(Stack),
-	Error(ErrorValue)
+	Loc(Loc<Box<Value<'v>>>),
+	Lexer(Lexer<'v>),
+	Stream(Stream<'v>),
+	Stack(Stack<'v>),
+	Error(ErrorValue<'v>),
+	Output(Box<dyn 'v + std::io::Write>)
 }
 
-impl Value {
-	pub fn option(opt: Option<Value>) -> Self {
+impl<'v> Value<'v> {
+	pub fn option(opt: Option<Self>) -> Self {
 		match opt {
-			None => Self::Instance(ty::Ref::Native(ty::Native::Option), InstanceData::EnumVariant(0, Vec::new())),
-			Some(value) => Self::Instance(ty::Ref::Native(ty::Native::Option), InstanceData::EnumVariant(1, vec![MaybeMovedValue::new(value)]))
+			None => Self::none(),
+			Some(value) => Self::some(value)
 		}
+	}
+
+	pub fn none() -> Self {
+		Self::Instance(ty::Ref::Native(ty::Native::Option), InstanceData::EnumVariant(0, Vec::new()))
+	}
+
+	pub fn some(value: Self) -> Self {
+		Self::Instance(ty::Ref::Native(ty::Native::Option), InstanceData::EnumVariant(1, vec![MaybeMovedValue::new(value)]))
+	}
+
+	pub fn ok(value: Self) -> Self {
+		Self::Instance(ty::Ref::Native(ty::Native::Result), InstanceData::EnumVariant(0, vec![MaybeMovedValue::new(value)]))
+	}
+
+	pub fn err(value: Self) -> Self {
+		Self::Instance(ty::Ref::Native(ty::Native::Result), InstanceData::EnumVariant(1, vec![MaybeMovedValue::new(value)]))
 	}
 
 	pub fn is_copiable(&self) -> bool {
@@ -633,7 +660,8 @@ impl Value {
 			Self::Lexer(_) => false,
 			Self::Stream(_) => false,
 			Self::Stack(_) => false,
-			Self::Error(_) => false
+			Self::Error(_) => false,
+			Self::Output(_) => false
 		}
 	}
 
@@ -647,39 +675,47 @@ impl Value {
 			Self::Lexer(_) => Err(Error::CannotMoveOut),
 			Self::Stream(_) => Err(Error::CannotMoveOut),
 			Self::Stack(_) => Err(Error::CannotMoveOut),
-			Self::Error(_) => Err(Error::CannotMoveOut)
+			Self::Error(_) => Err(Error::CannotMoveOut),
+			Self::Output(_) => Err(Error::CannotMoveOut)
 		}
 	}
 
-	pub fn as_lexer(&self) -> Result<&Lexer, Error> {
+	pub fn as_lexer(&self) -> Result<&Lexer<'v>, Error> {
 		match self {
 			Self::Lexer(l) => Ok(l),
 			_ => Err(Error::IncompatibleType)
 		}
 	}
 
-	pub fn as_lexer_mut(&mut self) -> Result<&mut Lexer, Error> {
+	pub fn as_lexer_mut(&mut self) -> Result<&mut Lexer<'v>, Error> {
 		match self {
 			Self::Lexer(l) => Ok(l),
 			_ => Err(Error::IncompatibleType)
 		}
 	}
 
-	pub fn as_stream_mut(&mut self) -> Result<&mut Stream, Error> {
+	pub fn as_stream_mut(&mut self) -> Result<&mut Stream<'v>, Error> {
 		match self {
 			Self::Stream(s) => Ok(s),
 			_ => Err(Error::IncompatibleType)
 		}
 	}
 
-	pub fn as_stack_mut(&mut self) -> Result<&mut Stack, Error> {
+	pub fn as_stack_mut(&mut self) -> Result<&mut Stack<'v>, Error> {
 		match self {
 			Self::Stack(s) => Ok(s),
 			_ => Err(Error::IncompatibleType)
 		}
 	}
 
-	pub fn into_option(self) -> Result<Option<Value>, Error> {
+	pub fn as_output_mut(&mut self) -> Result<&mut (dyn 'v + std::io::Write), Error> {
+		match self {
+			Self::Output(o) => Ok(o),
+			_ => Err(Error::IncompatibleType)
+		}
+	}
+
+	pub fn into_option(self) -> Result<Option<Self>, Error> {
 		match self {
 			Self::Instance(ty::Ref::Native(ty::Native::Option), InstanceData::EnumVariant(v, args)) => {
 				Ok(match v {
@@ -706,7 +742,7 @@ impl Value {
 		}
 	}
 
-	pub fn into_loc(self) -> Result<Loc<Value>, Error> {
+	pub fn into_loc(self) -> Result<Loc<Self>, Error> {
 		match self {
 			Self::Loc(v) => Ok(v.map(|v| *v)),
 			_ => Err(Error::IncompatibleType)
@@ -757,12 +793,12 @@ impl Value {
 	}
 }
 
-pub enum InstanceData {
-	EnumVariant(u32, Vec<MaybeMovedValue>),
-	Struct(Vec<MaybeMovedValue>)
+pub enum InstanceData<'v> {
+	EnumVariant(u32, Vec<MaybeMovedValue<'v>>),
+	Struct(Vec<MaybeMovedValue<'v>>)
 }
 
-impl InstanceData {
+impl<'v> InstanceData<'v> {
 	pub fn is_copiable(&self) -> bool {
 		match self {
 			Self::EnumVariant(_, args) => args.iter().all(|a| a.is_copiable()),
@@ -790,61 +826,75 @@ impl InstanceData {
 	}
 }
 
-pub struct Lexer {
-	//
+pub struct Lexer<'v> {
+	source: Peekable<Box<dyn 'v + Iterator<Item=Result<char, std::io::Error>>>>,
+	buffer: String,
+	span: Span
 }
 
-impl Lexer {
-	pub fn peek(&self) -> Value {
-		panic!("TODO")
+impl<'v> Lexer<'v> {
+	pub fn peek(&mut self) -> Value<'v> {
+		match self.source.peek() {
+			Some(Ok(c)) => Value::ok(Value::some(Value::Constant(Constant::Char(*c)))),
+			None => Value::ok(Value::none()),
+			Some(Err(_)) => Value::err(Value::Error(ErrorValue::IO(self.source.next().unwrap().expect_err("expected io error"))))
+		}
 	}
 
-	pub fn span(&self) -> Value {
-		panic!("TODO")
+	pub fn span(&self) -> Value<'v> {
+		Value::Span(self.span)
 	}
 
-	pub fn chars(&self) -> Value {
-		panic!("TODO")
+	pub fn chars(&self) -> Value<'v> {
+		// Note: We need to copy the buffer here since
+		// we cannot know statically if the caller will
+		// respect the lifetime of the buffer using the returned stream.
+		Value::Stream(Stream::Chars(self.buffer.chars().collect::<Vec<_>>().into_iter()))
 	}
 
 	pub fn clear(&mut self) {
-		panic!("TODO")
+		self.buffer.clear();
+		self.span.clear();
 	}
 
-	pub fn consume(&mut self) -> Value {
-		panic!("TODO")
+	pub fn consume(&mut self) -> Value<'v> {
+		match self.source.peek() {
+			Some(Ok(_)) | None => panic!("TODO"),
+			Some(Err(_)) => Value::err(Value::Error(ErrorValue::IO(self.source.next().unwrap().expect_err("expected io error"))))
+		}
 	}
 }
 
-pub enum Stream {
-	/// Source character stream.
-	Source,
-
+pub enum Stream<'v> {
 	/// Lexer.
-	Lexer(Lexer)
+	Lexer(Lexer<'v>),
+
+	/// Buffer characters.
+	Chars(std::vec::IntoIter<char>)
 }
 
-impl Stream {
-	pub fn pull(&mut self) -> Value {
+impl<'v> Stream<'v> {
+	pub fn pull(&mut self) -> Value<'v> {
 		panic!("TODO")
 	}
 }
 
-pub struct Stack {
-	// ...
+pub struct Stack<'v> {
+	inner: Vec<(Value<'v>, Value<'v>)>
 }
 
-impl Stack {
-	pub fn push(&mut self, value: Value, state: Value) {
-		panic!("TODO")
+impl<'v> Stack<'v> {
+	pub fn push(&mut self, value: Value<'v>, state: Value<'v>) {
+		self.inner.push((value, state))
 	}
 
-	pub fn pop(&mut self) -> Result<(Value, Value), Error> {
-		panic!("TODO")
+	pub fn pop(&mut self) -> Result<(Value<'v>, Value<'v>), Error> {
+		self.inner.pop().ok_or(Error::EmptyStack)
 	}
 }
 
-pub enum ErrorValue {
-	UnexpectedToken(Box<Value>),
-	UnexpectedNode(Box<Value>)
+pub enum ErrorValue<'v> {
+	IO(std::io::Error),
+	UnexpectedToken(Box<Value<'v>>),
+	UnexpectedNode(Box<Value<'v>>)
 }
