@@ -12,6 +12,7 @@ pub mod function;
 pub mod ty;
 
 pub mod eval;
+mod pretty_print;
 
 pub use constant::Constant;
 pub use expr::Expr;
@@ -21,6 +22,7 @@ pub use module::Module;
 pub use pattern::Pattern;
 pub use function::Function;
 pub use ty::Type;
+pub use pretty_print::*;
 
 #[derive(Debug)]
 pub struct InvalidTypeExpr;
