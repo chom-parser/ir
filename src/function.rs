@@ -53,6 +53,13 @@ impl<T: Ids> Signature<T> {
 	pub fn arity(&self) -> u32 {
 		self.arguments().len() as u32
 	}
+
+	pub fn is_lexer(&self) -> bool {
+		match self {
+			Self::Lexer(_, _) => true,
+			_ => false
+		}
+	}
 }
 
 pub struct Function<T: Ids> {

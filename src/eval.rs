@@ -90,7 +90,9 @@ pub enum Error {
 
 	UnreachableReached,
 
-	EmptyStack
+	EmptyStack,
+
+	UndefinedLexerMethod
 }
 
 pub enum MaybeMovedValue<'v> {
@@ -245,6 +247,10 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 		}
 	}
 
+	pub fn set_this(&mut self, this: Borrowed<'a, 'v>) {
+		self.this = Some(this)
+	}
+
 	pub fn get(&self, x: T::Var) -> Result<&Variable<'v>, Error> {
 		for frame in self.stack.iter().rev() {
 			if let Some(v) = frame.vars.get(&x) {
@@ -337,6 +343,23 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 				let expected_len = match ty.desc() {
 					ty::Desc::Struct(strct) => strct.len(),
 					ty::Desc::TupleStruct(args) => args.len() as u32,
+					ty::Desc::Lexer => return {
+						// A lexer is a bit special.
+						if args.len() == 1 {
+							let source = self.eval(&args[0])?.into_input()?;
+
+							let lexer_method = ty.methods().iter().find(|f_index| {
+								self.context.function(**f_index).unwrap().signature().is_lexer()
+							});
+
+							match lexer_method {
+								Some(lexer_method) => Ok(Value::Lexer(Lexer::new(*lexer_method, source))),
+								None => Err(Error::UndefinedLexerMethod)
+							}
+						} else {
+							Err(Error::InvalidNumberOfArguments(1, args.len() as u32))
+						}
+					},
 					_ => return Err(Error::NotAStructType(*ty_ref))
 				};
 
@@ -466,16 +489,18 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 					}
 					LexerExpr::Consume(next) => {
 						let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
-						lexer.consume();
-						self.eval(next)
+						match lexer.consume() {
+							Ok(()) => self.eval(next),
+							Err(e) => Ok(Value::err(e))
+						}
 					}
 				}
 			}
 			Expr::Stream(stream, e) => {
 				match e {
 					StreamExpr::Pull(x, next) => {
-						let stream = self.borrow_mut(*stream)?.as_stream_mut()?;
-						let value = stream.pull();
+						let context = self.context;
+						let value = Stream::pull(self.borrow_mut(*stream)?, context)?;
 						self.bind(*x, Variable::new(value, false));
 						self.eval(next)
 					}
@@ -621,7 +646,8 @@ pub enum Value<'v> {
 	Stream(Stream<'v>),
 	Stack(Stack<'v>),
 	Error(ErrorValue<'v>),
-	Output(Box<dyn 'v + std::io::Write>)
+	Input(&'v mut dyn Iterator<Item=Result<char, std::io::Error>>),
+	Output(&'v mut dyn std::io::Write)
 }
 
 impl<'v> Value<'v> {
@@ -661,7 +687,8 @@ impl<'v> Value<'v> {
 			Self::Stream(_) => false,
 			Self::Stack(_) => false,
 			Self::Error(_) => false,
-			Self::Output(_) => false
+			Self::Output(_) => false,
+			Self::Input(_) => false
 		}
 	}
 
@@ -676,7 +703,8 @@ impl<'v> Value<'v> {
 			Self::Stream(_) => Err(Error::CannotMoveOut),
 			Self::Stack(_) => Err(Error::CannotMoveOut),
 			Self::Error(_) => Err(Error::CannotMoveOut),
-			Self::Output(_) => Err(Error::CannotMoveOut)
+			Self::Output(_) => Err(Error::CannotMoveOut),
+			Self::Input(_) => Err(Error::CannotMoveOut)
 		}
 	}
 
@@ -708,9 +736,16 @@ impl<'v> Value<'v> {
 		}
 	}
 
-	pub fn as_output_mut(&mut self) -> Result<&mut (dyn 'v + std::io::Write), Error> {
+	pub fn as_output_mut(&mut self) -> Result<&mut dyn std::io::Write, Error> {
 		match self {
 			Self::Output(o) => Ok(o),
+			_ => Err(Error::IncompatibleType)
+		}
+	}
+
+	pub fn into_input(self) -> Result<&'v mut dyn Iterator<Item=std::io::Result<char>>, Error> {
+		match self {
+			Self::Input(o) => Ok(o),
 			_ => Err(Error::IncompatibleType)
 		}
 	}
@@ -827,12 +862,26 @@ impl<'v> InstanceData<'v> {
 }
 
 pub struct Lexer<'v> {
-	source: Peekable<Box<dyn 'v + Iterator<Item=Result<char, std::io::Error>>>>,
+	lexer_method: u32,
+	source: Peekable<&'v mut dyn Iterator<Item=Result<char, std::io::Error>>>,
 	buffer: String,
 	span: Span
 }
 
 impl<'v> Lexer<'v> {
+	pub fn new(lexer_method: u32, source: &'v mut dyn Iterator<Item=Result<char, std::io::Error>>) -> Self {
+		Self {
+			lexer_method,
+			source: source.peekable(),
+			buffer: String::new(),
+			span: Span::default()
+		}
+	}
+
+	pub fn method(&self) -> u32 {
+		self.lexer_method
+	}
+
 	pub fn peek(&mut self) -> Value<'v> {
 		match self.source.peek() {
 			Some(Ok(c)) => Value::ok(Value::some(Value::Constant(Constant::Char(*c)))),
@@ -857,10 +906,10 @@ impl<'v> Lexer<'v> {
 		self.span.clear();
 	}
 
-	pub fn consume(&mut self) -> Value<'v> {
+	pub fn consume(&mut self) -> Result<(), Value<'v>> {
 		match self.source.peek() {
-			Some(Ok(_)) | None => panic!("TODO"),
-			Some(Err(_)) => Value::err(Value::Error(ErrorValue::IO(self.source.next().unwrap().expect_err("expected io error"))))
+			Some(Ok(_)) | None => Ok(()),
+			Some(Err(_)) => Err(Value::Error(ErrorValue::IO(self.source.next().unwrap().expect_err("expected io error"))))
 		}
 	}
 }
@@ -874,8 +923,23 @@ pub enum Stream<'v> {
 }
 
 impl<'v> Stream<'v> {
-	pub fn pull(&mut self) -> Value<'v> {
-		panic!("TODO")
+	pub fn pull<T: Ids>(value: &mut Value<'v>, context: &Context<T>) -> Result<Value<'v>, Error> {
+		let stream = value.as_stream_mut()?;
+		match stream {
+			Self::Lexer(lexer) => {
+				let f = context.function(lexer.method()).unwrap();
+				let body = f.body().ok_or(Error::UnimplementedFunction)?;
+				let mut env = Environement::new(context);
+				env.set_this(Borrowed::Mut(value));
+				env.eval(body)
+			}
+			Self::Chars(chars) => {
+				Ok(match chars.next() {
+					Some(c) => Value::some(Value::Constant(Constant::Char(c))),
+					None => Value::none()
+				})
+			}
+		}
 	}
 }
 

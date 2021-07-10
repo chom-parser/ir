@@ -152,6 +152,10 @@ impl<T: Ids> Expr<T> {
 /// Lexer operation.
 pub enum LexerExpr<T: Ids> {
 	/// Peek a character from the source char stream.
+	/// 
+	/// This returns a `Result` that is either an error
+	/// if the lexer failed to peek the next character,
+	/// or an `Result::Ok` with the character.
 	Peek,
 
 	/// Return that current span stored in the lexer.
@@ -165,7 +169,10 @@ pub enum LexerExpr<T: Ids> {
 
 	/// Consume the next character from the source,
 	/// putting it in the buffer.
-	/// Then evaluate the given expression.
+	/// 
+	/// Returns either a `Result::Err` if the lexer failed
+	/// to pull the next character,
+	/// or evaluates the given expression.
 	Consume(Box<Expr<T>>),
 }
 
