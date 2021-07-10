@@ -164,6 +164,9 @@ pub enum LexerExpr<T: Ids> {
 	/// Creates an iterator from the characters of the buffer.
 	Chars,
 
+	/// Returns (a reference to) the buffer content.
+	Buffer,
+
 	/// Clear the lexer and then evaluate the given expression.
 	Clear(Box<Expr<T>>),
 
