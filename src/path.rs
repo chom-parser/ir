@@ -2,21 +2,21 @@ use crate::{
 	module,
 	ty,
 	function,
-	Ids
+	Namespace
 };
 
-pub enum Segment<'a, T: Ids> {
+pub enum Segment<'a, T: Namespace> {
 	Module(&'a module::Id<T>),
 	Type(ty::Id<T>),
 	Function(&'a function::Signature<T>)
 }
 
-pub struct Path<'a, T: Ids> {
+pub struct Path<'a, T: Namespace> {
 	parent: Option<Box<Path<'a, T>>>,
 	segment: Option<Segment<'a, T>>,
 }
 
-impl<'a, T: Ids> Path<'a, T> {
+impl<'a, T: Namespace> Path<'a, T> {
 	pub(crate) fn new(parent: Option<Path<'a, T>>, segment: Segment<'a, T>) -> Self {
 		Self {
 			parent: parent.map(Box::new),
@@ -25,7 +25,7 @@ impl<'a, T: Ids> Path<'a, T> {
 	}
 }
 
-impl<'a, T: Ids> Iterator for Path<'a, T> {
+impl<'a, T: Namespace> Iterator for Path<'a, T> {
 	type Item = Segment<'a, T>;
 
 	fn next(&mut self) -> Option<Self::Item> {

@@ -3,7 +3,6 @@ use source_span::Span;
 use crate::Constant;
 use super::{
 	Value,
-	Stream,
 	error
 };
 
@@ -11,7 +10,8 @@ pub struct Lexer<'v> {
 	lexer_method: u32,
 	source: Peekable<&'v mut dyn Iterator<Item=Result<char, std::io::Error>>>,
 	buffer: String,
-	span: Span
+	span: Span,
+	metrics: source_span::DefaultMetrics
 }
 
 impl<'v> Lexer<'v> {
@@ -20,7 +20,8 @@ impl<'v> Lexer<'v> {
 			lexer_method,
 			source: source.peekable(),
 			buffer: String::new(),
-			span: Span::default()
+			span: Span::default(),
+			metrics: source_span::DEFAULT_METRICS
 		}
 	}
 
@@ -44,7 +45,7 @@ impl<'v> Lexer<'v> {
 		// Note: We need to copy the buffer here since
 		// we cannot know statically if the caller will
 		// respect the lifetime of the buffer using the returned stream.
-		Value::Stream(Stream::Chars(self.buffer.chars().collect::<Vec<_>>().into_iter()))
+		Value::Chars(self.buffer.chars().collect::<Vec<_>>().into_iter())
 	}
 
 	pub fn buffer(&self) -> Value<'v> {
@@ -57,9 +58,14 @@ impl<'v> Lexer<'v> {
 	}
 
 	pub fn consume(&mut self) -> Result<(), Value<'v>> {
-		match self.source.peek() {
-			Some(Ok(_)) | None => Ok(()),
-			Some(Err(_)) => Err(Value::Error(error::Value::IO(self.source.next().unwrap().expect_err("expected io error"))))
+		match self.source.next() {
+			None => Ok(()),
+			Some(Ok(c)) => {
+				self.buffer.push(c);
+				self.span.push(c, &self.metrics);
+				Ok(())
+			},
+			Some(Err(e)) => Err(Value::Error(error::Value::IO(e)))
 		}
 	}
 }

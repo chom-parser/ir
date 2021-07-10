@@ -22,7 +22,10 @@ pub use pattern::Pattern;
 pub use function::Function;
 pub use ty::Type;
 
-pub struct Context<T: Ids> {
+#[derive(Debug)]
+pub struct InvalidTypeExpr;
+
+pub struct Context<T: Namespace> {
 	ids: T,
 
 	functions: Vec<Function<T>>,
@@ -32,7 +35,7 @@ pub struct Context<T: Ids> {
 	native_types: NativeTypes<T>,
 }
 
-pub struct NativeTypes<T: Ids> {
+pub struct NativeTypes<T: Namespace> {
 	unit: Type<T>,
 	option: Type<T>,
 	result: Type<T>,
@@ -44,7 +47,7 @@ pub struct NativeTypes<T: Ids> {
 	loc: Type<T>
 }
 
-impl<T: Ids> NativeTypes<T> {
+impl<T: Namespace> NativeTypes<T> {
 	pub fn new() -> Self {
 		use ty::Native;
 		Self {
@@ -91,7 +94,7 @@ impl<T: Ids> NativeTypes<T> {
 	}
 }
 
-impl<T: Ids> Context<T> {
+impl<T: Namespace> Context<T> {
 	pub fn new(ids: T) -> Self {
 		let mut context = Self {
 			ids,
@@ -133,6 +136,97 @@ impl<T: Ids> Context<T> {
 			ty::Ref::Native(n) => Some(self.native_types.get_mut(n)),
 			ty::Ref::Defined(i) => self.types.get_mut(i as usize)
 		}
+	}
+
+	pub fn ty_ref_by_id(&self, id: ty::Id<T>) -> Option<ty::Ref> {
+		match id {
+			ty::Id::Defined(t) => {
+				for (i, ty) in self.types.iter().enumerate() {
+					match ty.id() {
+						ty::Id::Defined(u) if u == t => return Some(ty::Ref::Defined(i as u32)),
+						_ => ()
+					}
+				}
+
+				None
+			},
+			ty::Id::Native(n) => {
+				let ty_ref = ty::Ref::Native(n);
+				if self.ty(ty_ref).is_some() {
+					Some(ty_ref)
+				} else {
+					None
+				}
+			}
+		}
+	}
+
+	pub fn ty_ref_by_ident(&self, ident: &Ident) -> Option<ty::Ref> {
+		for (i, ty) in self.types.iter().enumerate() {
+			match ty.id() {
+				ty::Id::Defined(u) if self.ids.type_ident(u) == *ident => return Some(ty::Ref::Defined(i as u32)),
+				_ => ()
+			}
+		}
+
+		ty::Native::from_ident(ident).map(|n| {
+			let ty_ref = ty::Ref::Native(n);
+			if self.ty(ty_ref).is_some() {
+				Some(ty_ref)
+			} else {
+				None
+			}
+		}).flatten()
+	}
+
+	pub fn parse_ty_expr(&self, string: &str) -> Result<Option<ty::Expr<T>>, InvalidTypeExpr> {
+		#[derive(Default)]
+		struct Node<T: Namespace> {
+			id: String,
+			args: Vec<ty::Expr<T>>
+		}
+
+		impl<T: Namespace> Node<T> {
+			fn new() -> Self {
+				Self {
+					id: String::new(),
+					args: Vec::new()
+				}
+			}
+		}
+		
+		let mut stack = Vec::new();
+		stack.push(Node::new());
+
+		let mut chars = string.chars();
+		while let Some(c) = chars.next() {
+			match c {
+				c if c.is_whitespace() => (),
+				'(' => {
+					stack.push(Node::new())
+				},
+				',' | ')' => {
+					let node = stack.pop().ok_or(InvalidTypeExpr)?;
+					let id = Ident::new(node.id).map_err(|_| InvalidTypeExpr)?;
+					match self.ty_ref_by_ident(&id) {
+						Some(ty_ref) => {
+							let ty_expr = ty::Expr::Instance(ty_ref, node.args);
+							stack.last_mut().ok_or(InvalidTypeExpr)?.args.push(ty_expr);
+							if c == ',' {
+								stack.push(Node::new())
+							}
+						},
+						None => return Ok(None)
+					}
+				}
+				c => stack.last_mut().ok_or(InvalidTypeExpr)?.id.push(c)
+			}
+		}
+
+		let node = stack.pop().ok_or(InvalidTypeExpr)?;
+		let id = Ident::new(node.id).map_err(|_| InvalidTypeExpr)?;
+		let args = node.args;
+		Ok(self.ty_ref_by_ident(&id).map(|ty_ref| ty::Expr::Instance(ty_ref, args)))
 	}
 
 	pub fn function(&self, index: u32) -> Option<&Function<T>> {
@@ -188,10 +282,18 @@ impl<T: Ids> Context<T> {
 		self.types.push(t);
 		i
 	}
+
+	pub fn lexer_types(&self) -> impl '_ + Iterator<Item=u32> {
+		self.types.iter().enumerate().filter(|(_, ty)| ty.is_lexer()).map(|(i, _)| i as u32)
+	}
+
+	pub fn parsers_for<'a>(&'a self, ty: &'a ty::Expr<T>) -> impl 'a + Iterator<Item=u32> {
+		self.functions.iter().enumerate().filter(move |(_, f)| f.is_parser_for(ty)).map(|(i, _)| i as u32)
+	}
 }
 
 /// Types used as identifiers.
-pub trait Ids {
+pub trait Namespace {
 	/// Const variable identifier type.
 	type Var: Copy + PartialEq + Eq + Hash;
 
@@ -199,10 +301,10 @@ pub trait Ids {
 	type Module: Copy;
 
 	/// Type identifier type.
-	type Type: Copy;
+	type Type: Copy + PartialEq + Eq;
 
 	/// Type parameter identifier type.
-	type Param: Copy;
+	type Param: Copy  + PartialEq + Eq;
 
 	/// Enum variant identifier type.
 	type Variant: Copy;
@@ -228,3 +330,9 @@ pub trait Ids {
 
 	fn label_ident(&self, l: Self::Label) -> Ident;
 }
+
+// pub trait ReverseNamespace: Namespace {
+// 	fn ty(&self, id: Ident) -> Self::Type;
+
+// 	fn param(&self, id: Ident) -> Self::Param;
+// }

@@ -1,5 +1,5 @@
 use crate::{
-	Ids,
+	Namespace,
 	Ident,
 	ty,
 	Expr
@@ -15,7 +15,7 @@ pub enum Owner {
 }
 
 /// Function signature.
-pub enum Signature<T: Ids> {
+pub enum Signature<T: Namespace> {
 	/// Extern parser used by the lexer to process tokens.
 	/// 
 	/// The given `Ident` is a custom name used to build
@@ -40,7 +40,7 @@ pub enum Signature<T: Ids> {
 	Lexer(ty::Expr<T>, ty::Expr<T>)
 }
 
-impl<T: Ids> Signature<T> {
+impl<T: Namespace> Signature<T> {
 	pub fn arguments(&self) -> &[T::Var] {
 		match self {
 			Self::ExternParser(x, _) => std::slice::from_ref(x),
@@ -60,15 +60,22 @@ impl<T: Ids> Signature<T> {
 			_ => false
 		}
 	}
+
+	pub fn is_parser_for(&self, t: &ty::Expr<T>) -> bool {
+		match self {
+			Self::Parser(_, _, target_ty) => t == target_ty,
+			_ => false
+		}
+	}
 }
 
-pub struct Function<T: Ids> {
+pub struct Function<T: Namespace> {
 	owner: Owner,
 	signature: Signature<T>,
 	body: Option<Expr<T>>
 }
 
-impl<T: Ids> Function<T> {
+impl<T: Namespace> Function<T> {
 	pub fn new(owner: Owner, signature: Signature<T>, body: Option<Expr<T>>) -> Self {
 		Self {
 			owner,
@@ -94,5 +101,13 @@ impl<T: Ids> Function<T> {
 
 	pub fn body(&self) -> Option<&Expr<T>> {
 		self.body.as_ref()
+	}
+
+	pub fn is_lexer(&self) -> bool {
+		self.signature().is_lexer()
+	}
+
+	pub fn is_parser_for(&self, t: &ty::Expr<T>) -> bool {
+		self.signature().is_parser_for(t)
 	}
 }

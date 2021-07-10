@@ -1,7 +1,11 @@
 use std::collections::HashMap;
-use source_span::Loc;
+use source_span::{
+	Position,
+	Span,
+	Loc
+};
 use crate::{
-	Ids,
+	Namespace,
 	Context,
 	ty,
 	Expr,
@@ -13,69 +17,21 @@ use crate::{
 		StackExpr,
 		SpanExpr
 	},
-	Pattern
+	Pattern,
+	function
 };
 use super::{
 	Value,
 	value,
 	Error,
 	error,
+	error::Desc as E,
 	Lexer,
-	Stream
+	Stack,
+	stream
 };
 
-pub struct Variable<'v> {
-	mutable: bool,
-	value: value::MaybeMoved<'v>
-}
-
-impl<'v> Variable<'v> {
-	pub fn new(value: Value<'v>, mutable: bool) -> Self {
-		Self {
-			mutable,
-			value: value::MaybeMoved::new(value)
-		}
-	}
-
-	pub fn update(&mut self, new_value: Value<'v>) -> Result<(), Error> {
-		if self.mutable {
-			self.value = value::MaybeMoved::new(new_value);
-			Ok(())
-		} else {
-			Err(Error::NotMutable)
-		}
-	}
-}
-
-pub struct Frame<'v, 'e, T: Ids> {
-	label: T::Label,
-
-	args: Vec<Var<T>>,
-
-	expr: &'e Expr<T>,
-
-	/// Variables local to the frame.
-	vars: HashMap<T::Var, Variable<'v>>,
-}
-
-impl<'v, 'e, T: Ids> Frame<'v, 'e, T> {
-	pub fn new(label: T::Label, args: Vec<Var<T>>, expr: &'e Expr<T>) -> Self {
-		Self {
-			label,
-			args,
-			expr,
-			vars: HashMap::new()
-		}
-	}
-
-	pub fn clear(&mut self) {
-		self.vars.clear()
-	}
-}
-
-
-
-pub struct Environement<'a, 'v, 'e, T: Ids> {
+pub struct Environment<'a, 'v, 'e, T: Namespace> {
 	/// Context.
 	context: &'a Context<T>,
 
@@ -89,7 +45,60 @@ pub struct Environement<'a, 'v, 'e, T: Ids> {
 	stack: Vec<Frame<'v, 'e, T>>
 }
 
-impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
+macro_rules! func_call {
+	($self:ident, $f_index:ident, $this:ident, $args:ident) => {
+		{
+			let f = $self.context.function($f_index).expect("unknown function");
+			let len = $args.len() as u32;
+
+			match f.body() {
+				Some(body) => {
+					let expected_len = f.signature().arity();
+					
+					if expected_len == len {
+						let mut env = Self::new($self.context);
+						for (i, a) in $args.into_iter().enumerate() {
+							let x = f.signature().arguments()[i];
+							env.vars.insert(x, Variable::new(a, false));
+						}
+
+						env.this = $this;
+						env.eval(body)
+					} else {
+						$self.err(E::InvalidNumberOfArguments(expected_len, len))
+					}
+				},
+				None => {
+					match f.signature() {
+						function::Signature::UndefinedChar(_, _) => {
+							if len == 1 {
+								let arg = $args.into_iter().next().unwrap().into_option()?;
+								let c = match arg {
+									Some(v) => Some(v.into_char()?),
+									None => None
+								};
+								Ok(Value::Error(error::Value::UnexpectedChar(c)))
+							} else {
+								$self.err(E::InvalidNumberOfArguments(1, len))
+							}
+						}
+						function::Signature::ExternParser(_, _) => {
+							if len == 1 {
+								let arg = $args.into_iter().next().unwrap().into_string()?;
+								Ok(Value::Opaque(arg))
+							} else {
+								$self.err(E::InvalidNumberOfArguments(1, len))
+							}
+						},
+						_ => $self.err(E::UnimplementedFunction)
+					}
+				}
+			}
+		}
+	};
+}
+
+impl<'a, 'v, 'e, T: Namespace> Environment<'a, 'v, 'e, T> {
 	pub fn new(context: &'a Context<T>) -> Self {
 		Self {
 			context,
@@ -97,6 +106,18 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 			this: None,
 			stack: Vec::new()
 		}
+	}
+
+	fn error(&self, e: E) -> Error {
+		Error::new(e)
+	}
+
+	fn err<X>(&self, e: E) -> Result<X, Error> {
+		Err(self.error(e))
+	}
+
+	pub fn context(&self) -> &'a Context<T> {
+		self.context
 	}
 
 	pub fn set_this(&mut self, this: value::Borrowed<'a, 'v>) {
@@ -112,13 +133,13 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 
 		match self.vars.get(&x) {
 			Some(v) => Ok(v),
-			None => Err(Error::UnboundVariable)
+			None => self.err(E::UnboundVariable)
 		}
 	}
 
 	pub fn borrow(&self, x: Var<T>) -> Result<&Value<'v>, Error> {
 		match x {
-			Var::This => Ok(self.this.as_ref().ok_or(Error::NoThis)?.borrow()),
+			Var::This => Ok(self.this.as_ref().ok_or_else(|| self.error(E::NoThis))?.borrow()),
 			Var::Defined(x) => self.get(x)?.value.borrow()
 		}
 	}
@@ -132,13 +153,13 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 
 		match self.vars.get_mut(&x) {
 			Some(v) => Ok(v),
-			None => Err(Error::UnboundVariable)
+			None => Err(Error::new(E::UnboundVariable))
 		}
 	}
 
 	pub fn borrow_mut(&mut self, x: Var<T>) -> Result<&mut Value<'v>, Error> {
 		match x {
-			Var::This => self.this.as_mut().ok_or(Error::NoThis)?.borrow_mut(),
+			Var::This => self.this.as_mut().ok_or_else(|| Error::new(E::NoThis))?.borrow_mut(),
 			Var::Defined(x) => self.get_mut(x)?.value.borrow_mut()
 		}
 	}
@@ -151,12 +172,90 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 		}
 	}
 
+	pub fn instanciate<V>(&self, ty_ref: ty::Ref, args: V) -> Result<Value<'v>, Error> where V: IntoIterator<Item=Value<'v>> {
+		match ty_ref {
+			ty::Ref::Native(n) => {
+				let args: Vec<_> = args.into_iter().collect();
+				match n {
+					ty::Native::Stack => {
+						if args.is_empty() {
+							Ok(Value::Stack(Stack::new()))
+						} else {
+							self.err(E::InvalidNumberOfArguments(0, args.len() as u32))
+						}
+					},
+					ty::Native::Position => {
+						if args.is_empty() {
+							Ok(Value::Position(Position::default()))
+						} else {
+							self.err(E::InvalidNumberOfArguments(0, args.len() as u32))
+						}
+					}
+					ty::Native::Span => {
+						if args.is_empty() {
+							Ok(Value::Span(Span::default()))
+						} else {
+							self.err(E::InvalidNumberOfArguments(0, args.len() as u32))
+						}
+					}
+					_ => self.err(E::NotAStructType(ty_ref))
+				}
+			},
+			ty::Ref::Defined(_) => {
+				let ty = self.context.ty(ty_ref).unwrap();
+				let expected_len = match ty.desc() {
+					ty::Desc::Struct(strct) => strct.len(),
+					ty::Desc::TupleStruct(args) => args.len() as u32,
+					ty::Desc::Lexer => return {
+						// A lexer is a bit special.
+						let args: Vec<_> = args.into_iter().collect();
+						if args.len() == 1 {
+							let source = args.into_iter().next().unwrap().into_input()?;
+							let lexer_method = ty.methods().iter().find(|f_index| {
+								self.context.function(**f_index).unwrap().signature().is_lexer()
+							});
+
+							match lexer_method {
+								Some(lexer_method) => Ok(Value::Lexer(Lexer::new(*lexer_method, source))),
+								None => self.err(E::UndefinedLexerMethod)
+							}
+						} else {
+							self.err(E::InvalidNumberOfArguments(1, args.len() as u32))
+						}
+					},
+					_ => return self.err(E::NotAStructType(ty_ref))
+				};
+
+				let args: Vec<_> = args.into_iter().map(|v| value::MaybeMoved::new(v)).collect();
+				let len = args.len() as u32;
+				if len == expected_len {
+					// TODO check types.
+					// let mut eargs = Vec::new();
+					// for a in args {
+					// 	eargs.push(value::MaybeMoved::new(self.eval(a)?));
+					// 	// TODO check types.
+					// }
+
+					Ok(Value::Instance(ty_ref, value::InstanceData::Struct(args)))
+				} else {
+					self.err(E::InvalidFieldCount(expected_len, len))
+				}
+			}
+		}
+	}
+
+	pub fn call(&mut self, f_index: u32, this: Option<value::Borrowed<'a, 'v>>, args: Vec<Value<'v>>) -> Result<Value<'v>, Error> {
+		func_call!(self, f_index, this, args)
+	}
+
 	pub fn eval(&mut self, e: &'e Expr<T>) -> Result<Value<'v>, Error> {
 		match e {
-			Expr::Literal(c) => Ok(Value::Constant(c.clone())),
+			Expr::Literal(c) => {
+				Ok(Value::Constant(c.clone()))
+			},
 			Expr::Get(v) => {
 				match v {
-					Var::This => self.this.as_ref().ok_or(Error::NoThis)?.borrow().copy(),
+					Var::This => self.this.as_ref().ok_or_else(|| self.error(E::NoThis))?.borrow().copy(),
 					Var::Defined(x) => self.get_mut(*x)?.value.copy_or_move()
 				}
 			},
@@ -168,15 +267,15 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 						if value_ty_ref == ty_ref {
 							match data {
 								value::InstanceData::Struct(bindings) => {
-									bindings.get_mut(index as usize).ok_or(Error::UndefinedField(index))?.copy_or_move()
+									bindings.get_mut(index as usize).ok_or_else(|| Error::new(E::UndefinedField(index)))?.copy_or_move()
 								}
-								_ => Err(Error::GetFieldFromNonStruct)
+								_ => self.err(E::GetFieldFromNonStruct)
 							}
 						} else {
-							Err(Error::IncompatibleType)
+							self.err(E::IncompatibleType)
 						}
 					},
-					_ => Err(Error::NotAnInstance)
+					_ => self.err(E::NotAnInstance)
 				}
 			},
 			Expr::Let(x, mutable, e, next) => {
@@ -190,42 +289,12 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 				self.eval(next)
 			},
 			Expr::New(ty_ref, args) => {
-				let ty = self.context.ty(*ty_ref).unwrap();
-				let len = args.len() as u32;
-				let expected_len = match ty.desc() {
-					ty::Desc::Struct(strct) => strct.len(),
-					ty::Desc::TupleStruct(args) => args.len() as u32,
-					ty::Desc::Lexer => return {
-						// A lexer is a bit special.
-						if args.len() == 1 {
-							let source = self.eval(&args[0])?.into_input()?;
-
-							let lexer_method = ty.methods().iter().find(|f_index| {
-								self.context.function(**f_index).unwrap().signature().is_lexer()
-							});
-
-							match lexer_method {
-								Some(lexer_method) => Ok(Value::Lexer(Lexer::new(*lexer_method, source))),
-								None => Err(Error::UndefinedLexerMethod)
-							}
-						} else {
-							Err(Error::InvalidNumberOfArguments(1, args.len() as u32))
-						}
-					},
-					_ => return Err(Error::NotAStructType(*ty_ref))
-				};
-
-				if len == expected_len {
-					let mut eargs = Vec::new();
-					for a in args {
-						eargs.push(value::MaybeMoved::new(self.eval(a)?));
-						// TODO check types.
-					}
-
-					Ok(Value::Instance(*ty_ref, value::InstanceData::Struct(eargs)))
-				} else {
-					Err(Error::InvalidFieldCount(expected_len, len))
+				let mut eargs = Vec::with_capacity(args.len());
+				for a in args {
+					eargs.push(self.eval(a)?)
 				}
+
+				self.instanciate(*ty_ref, eargs)
 			},
 			Expr::Cons(ty_ref, index, args) => {
 				let ty = self.context.ty(*ty_ref).unwrap();
@@ -244,10 +313,10 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 		
 							Ok(Value::Instance(*ty_ref, value::InstanceData::EnumVariant(*index, eargs)))
 						} else {
-							Err(Error::InvalidFieldCount(expected_len, len))
+							self.err(E::InvalidFieldCount(expected_len, len))
 						}
 					},
-					_ => Err(Error::NotAnEnumType(*ty_ref))
+					_ => self.err(E::NotAnEnumType(*ty_ref))
 				}
 			}
 			Expr::Heap(e) => self.eval(e),
@@ -261,7 +330,7 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 					}
 				}
 				
-				Err(Error::NoMatch)
+				self.err(E::NoMatch)
 			}
 			Expr::LetMatch(pattern, expr, next) => {
 				let value = self.eval(expr)?;
@@ -269,31 +338,23 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 				self.eval(next)
 			}
 			Expr::Call(f_index, this, args) => {
-				let f = self.context.function(*f_index).expect("unknown function");
-				let body = f.body().ok_or(Error::UnimplementedFunction)?;
-
-				let expected_len = f.signature().arity();
-				let len = args.len() as u32;
-				if expected_len == len {
-					let mut env = Self::new(self.context);
-					for (i, x) in f.signature().arguments().iter().enumerate() {
-						env.vars.insert(*x, Variable::new(self.eval(&args[i])?, false));
-					}
-
-					env.this = match this {
-						Some((x, false)) => {
-							Some(value::Borrowed::Const(self.vars.get(&x).ok_or(Error::UnboundVariable)?.value.borrow()?))
-						},
-						Some((x, true)) => {
-							Some(value::Borrowed::Mut(self.vars.get_mut(&x).ok_or(Error::UnboundVariable)?.value.borrow_mut()?))
-						},
-						None => None
-					};
-
-					env.eval(body)
-				} else {
-					Err(Error::InvalidNumberOfArguments(len, expected_len))
+				let mut eargs = Vec::with_capacity(args.len());
+				for a in args {
+					eargs.push(self.eval(a)?)
 				}
+
+				let this = match this {
+					Some((x, false)) => {
+						Some(value::Borrowed::Const(self.vars.get(&x).ok_or_else(|| self.error(E::UnboundVariable))?.value.borrow()?))
+					},
+					Some((x, true)) => {
+						Some(value::Borrowed::Mut(self.vars.get_mut(&x).ok_or_else(|| Error::new(E::UnboundVariable))?.value.borrow_mut()?))
+					},
+					None => None
+				};
+
+				let f_index = *f_index;
+				func_call!(self, f_index, this, eargs)
 			}
 			Expr::TailRecursion { label, args, body } => {
 				self.stack.push(Frame::new(*label, args.clone(), body));
@@ -307,7 +368,7 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 								break
 							}
 						},
-						None => return Err(Error::UnreachableLabel)
+						None => return self.err(E::UnreachableLabel)
 					}
 				}
 
@@ -317,7 +378,7 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 					let expr = frame.expr;
 					self.eval(expr)
 				} else {
-					Err(Error::RecursionArgsMissmatch)
+					self.err(E::RecursionArgsMissmatch)
 				}
 			}
 			Expr::Lexer(lexer, e) => {
@@ -356,7 +417,7 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 				match e {
 					StreamExpr::Pull(x, next) => {
 						let context = self.context;
-						let value = Stream::pull(self.borrow_mut(*stream)?, context)?;
+						let value = stream::pull(self.borrow_mut(*stream)?, context)?;
 						self.bind(*x, Variable::new(value, false));
 						self.eval(next)
 					}
@@ -427,10 +488,23 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 					}
 				}
 			}
+			Expr::Print(string, next) => {
+				eprintln!("{}", string);
+				self.eval(next)
+			}
 			Expr::Write(output, string, next) => {
 				let output = self.borrow_mut(*output)?.as_output_mut()?;
-				output.write_all(string.as_bytes()).map_err(Error::IO)?;
+				output.write_all(string.as_bytes()).map_err(|e| self.error(E::IO(e)))?;
 				self.eval(next)
+			}
+			Expr::Check(x, e, next) => {
+				let value = self.eval(e)?;
+				if value.is_err() {
+					Ok(value)
+				} else {
+					self.bind(*x, Variable::new(value.expect_ok()?, false));
+					self.eval(next)
+				}
 			}
 			Expr::Error(e) => {
 				Ok(Value::Error(match e {
@@ -442,7 +516,7 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 					}
 				}))
 			}
-			Expr::Unreachable => Err(Error::UnreachableReached)
+			Expr::Unreachable => self.err(E::UnreachableReached)
 		}
 	}
 
@@ -452,7 +526,7 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 			(Pattern::Bind(x), value) => { self.bind(*x, Variable::new(value, false)); },
 			(Pattern::Literal(a), Value::Constant(b)) => {
 				if *a != b {
-					return Err(Error::PatternMissmatch)
+					return self.err(E::PatternMissmatch)
 				}
 			},
 			(Pattern::Cons(ty_a, va, patterns), Value::Instance(ty_b, data)) => {
@@ -467,26 +541,75 @@ impl<'a, 'v, 'e, T: Ids> Environement<'a, 'v, 'e, T> {
 										self.let_match(a.unwrap()?, &patterns[i])?
 									}
 								} else {
-									return Err(Error::InvalidFieldCount(len, expected_len))
+									return self.err(E::InvalidFieldCount(len, expected_len))
 								}
 							} else {
-								return Err(Error::PatternMissmatch)
+								return self.err(E::PatternMissmatch)
 							}
 						},
-						_ => return Err(Error::NotAnEnumVariant)
+						_ => return self.err(E::NotAnEnumVariant)
 					}
 				} else {
-					return Err(Error::IncompatibleType)
+					return self.err(E::IncompatibleType)
 				}
 			},
 			(Pattern::Or(patterns), _) => {
 				if patterns.iter().any(Pattern::is_bound) {
-					return Err(Error::BindingPatternUnion)
+					return self.err(E::BindingPatternUnion)
 				}
 			},
-			(_, _) => return Err(Error::PatternMissmatch)
+			(_, _) => return self.err(E::PatternMissmatch)
 		}
 
 		Ok(())
+	}
+}
+
+pub struct Variable<'v> {
+	mutable: bool,
+	value: value::MaybeMoved<'v>
+}
+
+impl<'v> Variable<'v> {
+	pub fn new(value: Value<'v>, mutable: bool) -> Self {
+		Self {
+			mutable,
+			value: value::MaybeMoved::new(value)
+		}
+	}
+
+	pub fn update(&mut self, new_value: Value<'v>) -> Result<(), Error> {
+		if self.mutable {
+			self.value = value::MaybeMoved::new(new_value);
+			Ok(())
+		} else {
+			Err(Error::new(E::NotMutable))
+		}
+	}
+}
+
+pub struct Frame<'v, 'e, T: Namespace> {
+	label: T::Label,
+
+	args: Vec<Var<T>>,
+
+	expr: &'e Expr<T>,
+
+	/// Variables local to the frame.
+	vars: HashMap<T::Var, Variable<'v>>,
+}
+
+impl<'v, 'e, T: Namespace> Frame<'v, 'e, T> {
+	pub fn new(label: T::Label, args: Vec<Var<T>>, expr: &'e Expr<T>) -> Self {
+		Self {
+			label,
+			args,
+			expr,
+			vars: HashMap::new()
+		}
+	}
+
+	pub fn clear(&mut self) {
+		self.vars.clear()
 	}
 }

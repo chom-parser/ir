@@ -4,16 +4,16 @@ use source_span::{
 	Loc
 };
 use crate::{
-	Ids,
+	Namespace,
 	Constant,
 	ty,
 	Pattern
 };
 use super::{
 	Lexer,
-	Stream,
 	Stack,
 	error,
+	error::Desc as E,
 	Error
 };
 
@@ -25,11 +25,12 @@ pub enum Value<'v> {
 	Span(Span),
 	Loc(Loc<Box<Value<'v>>>),
 	Lexer(Lexer<'v>),
-	Stream(Stream<'v>),
+	Chars(std::vec::IntoIter<char>),
 	Stack(Stack<'v>),
 	Error(error::Value<'v>),
 	Input(&'v mut dyn Iterator<Item=Result<char, std::io::Error>>),
-	Output(&'v mut dyn std::io::Write)
+	Output(&'v mut dyn std::io::Write),
+	Opaque(String)
 }
 
 impl<'v> Value<'v> {
@@ -56,6 +57,22 @@ impl<'v> Value<'v> {
 		Self::Instance(ty::Ref::Native(ty::Native::Result), InstanceData::EnumVariant(1, vec![MaybeMoved::new(value)]))
 	}
 
+	/// Checks if the value is an `Result::Err` instance.
+	pub fn is_err(&self) -> bool {
+		match self {
+			Self::Instance(ty::Ref::Native(ty::Native::Result), InstanceData::EnumVariant(1, _)) => true,
+			_ => false
+		}
+	}
+
+	/// Unwrap a value inside a `Result::Ok`.
+	pub fn expect_ok(self) -> Result<Self, Error> {
+		match self {
+			Self::Instance(ty::Ref::Native(ty::Native::Result), InstanceData::EnumVariant(0, args)) => Ok(args.into_iter().next().unwrap().unwrap()?),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
 	pub fn is_copiable(&self) -> bool {
 		match self {
 			Self::Constant(_) => true,
@@ -65,12 +82,7 @@ impl<'v> Value<'v> {
 			Self::Position(_) => true,
 			Self::Span(_) => true,
 			Self::Loc(l) => l.as_ref().is_copiable(),
-			Self::Lexer(_) => false,
-			Self::Stream(_) => false,
-			Self::Stack(_) => false,
-			Self::Error(_) => false,
-			Self::Output(_) => false,
-			Self::Input(_) => false
+			_ => false
 		}
 	}
 
@@ -81,54 +93,56 @@ impl<'v> Value<'v> {
 			Self::Position(p) => Ok(Self::Position(*p)),
 			Self::Span(s) => Ok(Self::Span(*s)),
 			Self::Loc(l) => Ok(Self::Loc(Loc::new(Box::new(l.as_ref().copy()?), l.span()))),
-			Self::Lexer(_) => Err(Error::CannotMoveOut),
-			Self::Stream(_) => Err(Error::CannotMoveOut),
-			Self::Stack(_) => Err(Error::CannotMoveOut),
-			Self::Error(_) => Err(Error::CannotMoveOut),
-			Self::Output(_) => Err(Error::CannotMoveOut),
-			Self::Input(_) => Err(Error::CannotMoveOut)
+			_ => Err(Error::new(E::CannotMoveOut))
 		}
 	}
 
 	pub fn as_lexer(&self) -> Result<&Lexer<'v>, Error> {
 		match self {
 			Self::Lexer(l) => Ok(l),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
 	pub fn as_lexer_mut(&mut self) -> Result<&mut Lexer<'v>, Error> {
 		match self {
 			Self::Lexer(l) => Ok(l),
-			_ => Err(Error::IncompatibleType)
-		}
-	}
-
-	pub fn as_stream_mut(&mut self) -> Result<&mut Stream<'v>, Error> {
-		match self {
-			Self::Stream(s) => Ok(s),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
 	pub fn as_stack_mut(&mut self) -> Result<&mut Stack<'v>, Error> {
 		match self {
 			Self::Stack(s) => Ok(s),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
 	pub fn as_output_mut(&mut self) -> Result<&mut dyn std::io::Write, Error> {
 		match self {
 			Self::Output(o) => Ok(o),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_char(self) -> Result<char, Error> {
+		match self {
+			Self::Constant(Constant::Char(c)) => Ok(c),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_string(self) -> Result<String, Error> {
+		match self {
+			Self::Constant(Constant::String(s)) => Ok(s),
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
 	pub fn into_input(self) -> Result<&'v mut dyn Iterator<Item=std::io::Result<char>>, Error> {
 		match self {
 			Self::Input(o) => Ok(o),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
@@ -141,32 +155,65 @@ impl<'v> Value<'v> {
 					_ => panic!("invalid option")
 				})
 			},
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
+	}
+
+	pub fn into_result(self) -> Result<Result<Self, Self>, Error> {
+		match self {
+			Self::Instance(ty::Ref::Native(ty::Native::Result), InstanceData::EnumVariant(v, args)) => {
+				let value = args.into_iter().next().unwrap().unwrap()?;
+				Ok(match v {
+					0 => Ok(value),
+					1 => Err(value),
+					_ => panic!("invalid option")
+				})
+			},
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_error(self) -> Result<error::Value<'v>, Error> {
+		match self {
+			Self::Error(e) => Ok(e),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_loc_error(self) -> Result<Loc<error::Value<'v>>, Error> {
+		let loc = self.into_loc()?;
+		loc.try_map(|v| v.into_error())
 	}
 
 	pub fn into_position(self) -> Result<Position, Error> {
 		match self {
 			Self::Position(p) => Ok(p),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
 	pub fn into_span(self) -> Result<Span, Error> {
 		match self {
 			Self::Span(s) => Ok(s),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
 	pub fn into_loc(self) -> Result<Loc<Self>, Error> {
 		match self {
 			Self::Loc(v) => Ok(v.map(|v| *v)),
-			_ => Err(Error::IncompatibleType)
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
-	pub fn matches<T: Ids>(&self, pattern: &Pattern<T>) -> Result<bool, Error> {
+	pub fn into_lexer(self) -> Result<Lexer<'v>, Error> {
+		match self {
+			Self::Lexer(l) => Ok(l),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn matches<T: Namespace>(&self, pattern: &Pattern<T>) -> Result<bool, Error> {
 		match (pattern, self) {
 			(Pattern::Any | Pattern::Bind(_), _) => Ok(true),
 			(Pattern::Literal(a), Self::Constant(b)) => Ok(a == b),
@@ -184,16 +231,16 @@ impl<'v> Value<'v> {
 
 									Ok(true)
 								} else {
-									Err(Error::InvalidFieldCount(args.len() as u32, patterns.len() as u32))
+									Err(Error::new(E::InvalidFieldCount(args.len() as u32, patterns.len() as u32)))
 								}
 							} else {
 								Ok(false)
 							}
 						},
-						_ => Err(Error::NotAnEnumVariant)
+						_ => Err(Error::new(E::NotAnEnumVariant))
 					}
 				} else {
-					Err(Error::IncompatibleType)
+					Err(Error::new(E::IncompatibleType))
 				}
 			},
 			(Pattern::Or(patterns), _) => {
@@ -256,21 +303,21 @@ impl<'v> MaybeMoved<'v> {
 	pub fn unwrap(self) -> Result<Value<'v>, Error> {
 		match self {
 			Self::Here(v) => Ok(v),
-			Self::Moved => Err(Error::ValueMoved)
+			Self::Moved => Err(Error::new(E::ValueMoved))
 		}
 	}
 
 	pub fn borrow(&self) -> Result<&Value<'v>, Error> {
 		match self {
 			Self::Here(v) => Ok(v),
-			Self::Moved => Err(Error::ValueMoved)
+			Self::Moved => Err(Error::new(E::ValueMoved))
 		}
 	}
 
 	pub fn borrow_mut(&mut self) -> Result<&mut Value<'v>, Error> {
 		match self {
 			Self::Here(v) => Ok(v),
-			Self::Moved => Err(Error::ValueMoved)
+			Self::Moved => Err(Error::new(E::ValueMoved))
 		}
 	}
 
@@ -281,7 +328,7 @@ impl<'v> MaybeMoved<'v> {
 					return Ok(value.copy()?)
 				}
 			},
-			Self::Moved => return Err(Error::ValueAlreadyMoved)
+			Self::Moved => return Err(Error::new(E::ValueAlreadyMoved))
 		}
 
 		let mut this = Self::Moved;
@@ -317,7 +364,7 @@ impl<'a, 'v> Borrowed<'a, 'v> {
 	pub fn borrow_mut(&mut self) -> Result<&mut Value<'v>, Error> {
 		match self {
 			Self::Mut(v) => Ok(v),
-			Self::Const(_) => Err(Error::ImmutableThis)
+			Self::Const(_) => Err(Error::new(E::ImmutableThis))
 		}
 	}
 }

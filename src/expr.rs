@@ -1,20 +1,20 @@
 use derivative::Derivative;
-use crate::{ty, Constant, Ids, Pattern};
+use crate::{ty, Constant, Namespace, Pattern};
 
-pub enum Error<T: Ids> {
+pub enum Error<T: Namespace> {
 	UnexpectedToken(Box<Expr<T>>),
 	UnexpectedNode(Box<Expr<T>>),
 }
 
 #[derive(Derivative)]
 #[derivative(Clone, Copy, PartialEq, Eq)]
-pub enum Var<T: Ids> {
+pub enum Var<T: Namespace> {
 	This,
 	Defined(T::Var)
 }
 
 /// Expression.
-pub enum Expr<T: Ids> {
+pub enum Expr<T: Namespace> {
 	/// Literal value.
 	Literal(Constant),
 
@@ -104,9 +104,22 @@ pub enum Expr<T: Ids> {
 	/// Span-related expressions.
 	Span(SpanExpr<T>),
 
+	/// Print to the error output.
+	/// 
+	/// This is only useful for debug.
+	Print(String, Box<Expr<T>>),
+
 	/// Write the given string to the output,
 	/// and then evaluate the given expression.
 	Write(Var<T>, String, Box<Expr<T>>),
+
+	/// Check that the first given result value is
+	/// not an error.
+	/// 
+	/// If it is, then immediatly return this value.
+	/// If not, put it in the given variable and
+	/// evaluate the next expression.
+	Check(T::Var, Box<Expr<T>>, Box<Expr<T>>),
 
 	/// Error value.
 	Error(Error<T>),
@@ -115,7 +128,7 @@ pub enum Expr<T: Ids> {
 	Unreachable,
 }
 
-impl<T: Ids> Expr<T> {
+impl<T: Namespace> Expr<T> {
 	pub fn none() -> Self {
 		Self::Cons(ty::Ref::Native(ty::Native::Option), 0, Vec::new())
 	}
@@ -141,7 +154,7 @@ impl<T: Ids> Expr<T> {
 	}
 
 	pub fn nowhere() -> Self {
-		Self::New(ty::Ref::Native(ty::Native::Span), Vec::new())
+		Self::New(ty::Ref::Native(ty::Native::Position), Vec::new())
 	}
 
 	pub fn empty_stack() -> Self {
@@ -150,7 +163,7 @@ impl<T: Ids> Expr<T> {
 }
 
 /// Lexer operation.
-pub enum LexerExpr<T: Ids> {
+pub enum LexerExpr<T: Namespace> {
 	/// Peek a character from the source char stream.
 	/// 
 	/// This returns a `Result` that is either an error
@@ -179,7 +192,7 @@ pub enum LexerExpr<T: Ids> {
 	Consume(Box<Expr<T>>),
 }
 
-impl<T: Ids> LexerExpr<T> {
+impl<T: Namespace> LexerExpr<T> {
 	/// Checks if the operation is "continued",
 	/// that is when an expression is evaluated after the operation.
 	pub fn is_continued(&self) -> bool {
@@ -190,7 +203,7 @@ impl<T: Ids> LexerExpr<T> {
 	}
 }
 
-pub enum StreamExpr<T: Ids> {
+pub enum StreamExpr<T: Namespace> {
 	/// Get the next token from the parser and evaluate the given expression.
 	///
 	/// `Pull(lexer, a, e)` corresponds to the following Ocaml-like bit of code:
@@ -200,7 +213,7 @@ pub enum StreamExpr<T: Ids> {
 	Pull(T::Var, Box<Expr<T>>),
 }
 
-pub enum StackExpr<T: Ids> {
+pub enum StackExpr<T: Namespace> {
 	/// Push a value on the stack and evaluate the given expression.
 	///
 	/// `StackPush(stack, b, c, e)` is equivalent to
@@ -218,7 +231,7 @@ pub enum StackExpr<T: Ids> {
 	Pop(Option<T::Var>, Option<T::Var>, Box<Expr<T>>),
 }
 
-pub enum SpanExpr<T: Ids> {
+pub enum SpanExpr<T: Namespace> {
 	Locate(Box<Expr<T>>, Box<Expr<T>>),
 
 	/// Create a new span from a position.
@@ -247,7 +260,7 @@ pub enum SpanExpr<T: Ids> {
 	Merge(Box<Expr<T>>, Box<Expr<T>>),
 }
 
-impl<T: Ids> SpanExpr<T> {
+impl<T: Namespace> SpanExpr<T> {
 	/// Checks if the operation is "continued",
 	/// that is when an expression is evaluated after the operation.
 	pub fn is_continued(&self) -> bool {
@@ -258,7 +271,7 @@ impl<T: Ids> SpanExpr<T> {
 	}
 }
 
-impl<T: Ids> Expr<T> {
+impl<T: Namespace> Expr<T> {
 	/// Checks if the expression is "continued",
 	/// that is when another expression is evaluated after the operation.
 	/// Such expression can be generated with a preceding `return` or `break` statement
@@ -279,17 +292,17 @@ impl<T: Ids> Expr<T> {
 	}
 }
 
-pub struct MatchCase<T: Ids> {
+pub struct MatchCase<T: Namespace> {
 	pub pattern: Pattern<T>,
 	pub expr: Expr<T>,
 }
 
-// pub enum BuildArgs<T: Ids> {
+// pub enum BuildArgs<T: Namespace> {
 // 	Tuple(Vec<Expr<T>>),
 // 	Struct(Vec<Binding<T>>),
 // }
 
-// impl<T: Ids> BuildArgs<T> {
+// impl<T: Namespace> BuildArgs<T> {
 // 	pub fn empty() -> Self {
 // 		BuildArgs::Tuple(Vec::new())
 // 	}
@@ -302,7 +315,7 @@ pub struct MatchCase<T: Ids> {
 // 	}
 // }
 
-// pub struct Binding<T: Ids> {
+// pub struct Binding<T: Namespace> {
 // 	pub id: T::Field,
 // 	pub expr: Expr<T>,
 // }

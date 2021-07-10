@@ -1,7 +1,7 @@
-use crate::{ty, Constant, Expr, Ids};
+use crate::{ty, Constant, Expr, Namespace};
 
 /// Pattern.
-pub enum Pattern<T: Ids> {
+pub enum Pattern<T: Namespace> {
 	/// Matches any value.
 	Any,
 
@@ -22,7 +22,7 @@ pub enum Pattern<T: Ids> {
 	Or(Vec<Pattern<T>>),
 }
 
-impl<T: Ids> Clone for Pattern<T>
+impl<T: Namespace> Clone for Pattern<T>
 where
 	T::Var: Clone,
 	T::Field: Clone,
@@ -38,7 +38,7 @@ where
 	}
 }
 
-// impl<T: Ids> Clone for ConsArgs<T>
+// impl<T: Namespace> Clone for ConsArgs<T>
 // where
 // 	T::Var: Clone,
 // 	T::Field: Clone,
@@ -51,7 +51,7 @@ where
 // 	}
 // }
 
-// impl<T: Ids> ConsArgs<T> {
+// impl<T: Namespace> ConsArgs<T> {
 // 	pub fn is_empty(&self) -> bool {
 // 		match self {
 // 			Self::Tuple(args) => args.is_empty(),
@@ -60,12 +60,12 @@ where
 // 	}
 // }
 
-pub struct Binding<T: Ids> {
+pub struct Binding<T: Namespace> {
 	pub id: T::Field,
 	pub pattern: Pattern<T>,
 }
 
-impl<T: Ids> Clone for Binding<T>
+impl<T: Namespace> Clone for Binding<T>
 where
 	T::Var: Clone,
 	T::Field: Clone,
@@ -78,7 +78,7 @@ where
 	}
 }
 
-impl<T: Ids> Pattern<T> {
+impl<T: Namespace> Pattern<T> {
 	pub fn none() -> Self {
 		Self::Cons(
 			ty::Ref::Native(ty::Native::Option),
