@@ -1,4 +1,7 @@
-use std::iter::Peekable;
+use std::{
+	iter::Peekable,
+	fmt
+};
 use source_span::Span;
 use crate::Constant;
 use super::{
@@ -67,5 +70,11 @@ impl<'v> Lexer<'v> {
 			},
 			Some(Err(e)) => Err(Value::Error(error::Value::IO(e)))
 		}
+	}
+}
+
+impl<'v> fmt::Debug for Lexer<'v> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "Lexer(buffer={}, span={})", self.buffer, self.span)
 	}
 }

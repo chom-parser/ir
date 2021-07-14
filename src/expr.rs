@@ -1,20 +1,20 @@
 use derivative::Derivative;
 use crate::{ty, Constant, Namespace, Pattern};
 
-pub enum Error<T: Namespace> {
+pub enum Error<T: Namespace + ?Sized> {
 	UnexpectedToken(Box<Expr<T>>),
 	UnexpectedNode(Box<Expr<T>>),
 }
 
 #[derive(Derivative)]
 #[derivative(Clone, Copy, PartialEq, Eq)]
-pub enum Var<T: Namespace> {
+pub enum Var<T: Namespace + ?Sized> {
 	This,
 	Defined(T::Var)
 }
 
 /// Expression.
-pub enum Expr<T: Namespace> {
+pub enum Expr<T: Namespace + ?Sized> {
 	/// Literal value.
 	Literal(Constant),
 
@@ -69,7 +69,7 @@ pub enum Expr<T: Namespace> {
 
 	/// Call the given function with an optional object
 	/// that will serve as `this`.
-	Call(u32, Option<(T::Var, bool)>, Vec<Expr<T>>),
+	Call(u32, Option<T::Var>, Vec<Expr<T>>),
 
 	/// Tail recursion.
 	///
@@ -128,7 +128,7 @@ pub enum Expr<T: Namespace> {
 	Unreachable,
 }
 
-impl<T: Namespace> Expr<T> {
+impl<T: Namespace + ?Sized> Expr<T> {
 	pub fn none() -> Self {
 		Self::Cons(ty::Ref::Native(ty::Native::Option), 0, Vec::new())
 	}
@@ -163,7 +163,7 @@ impl<T: Namespace> Expr<T> {
 }
 
 /// Lexer operation.
-pub enum LexerExpr<T: Namespace> {
+pub enum LexerExpr<T: Namespace + ?Sized> {
 	/// Peek a character from the source char stream.
 	/// 
 	/// This returns a `Result` that is either an error
@@ -192,7 +192,7 @@ pub enum LexerExpr<T: Namespace> {
 	Consume(Box<Expr<T>>),
 }
 
-impl<T: Namespace> LexerExpr<T> {
+impl<T: Namespace + ?Sized> LexerExpr<T> {
 	/// Checks if the operation is "continued",
 	/// that is when an expression is evaluated after the operation.
 	pub fn is_continued(&self) -> bool {
@@ -203,7 +203,7 @@ impl<T: Namespace> LexerExpr<T> {
 	}
 }
 
-pub enum StreamExpr<T: Namespace> {
+pub enum StreamExpr<T: Namespace + ?Sized> {
 	/// Get the next token from the parser and evaluate the given expression.
 	///
 	/// `Pull(lexer, a, e)` corresponds to the following Ocaml-like bit of code:
@@ -213,7 +213,7 @@ pub enum StreamExpr<T: Namespace> {
 	Pull(T::Var, Box<Expr<T>>),
 }
 
-pub enum StackExpr<T: Namespace> {
+pub enum StackExpr<T: Namespace + ?Sized> {
 	/// Push a value on the stack and evaluate the given expression.
 	///
 	/// `StackPush(stack, b, c, e)` is equivalent to
@@ -231,7 +231,7 @@ pub enum StackExpr<T: Namespace> {
 	Pop(Option<T::Var>, Option<T::Var>, Box<Expr<T>>),
 }
 
-pub enum SpanExpr<T: Namespace> {
+pub enum SpanExpr<T: Namespace + ?Sized> {
 	Locate(Box<Expr<T>>, Box<Expr<T>>),
 
 	/// Create a new span from a position.
@@ -260,7 +260,7 @@ pub enum SpanExpr<T: Namespace> {
 	Merge(Box<Expr<T>>, Box<Expr<T>>),
 }
 
-impl<T: Namespace> SpanExpr<T> {
+impl<T: Namespace + ?Sized> SpanExpr<T> {
 	/// Checks if the operation is "continued",
 	/// that is when an expression is evaluated after the operation.
 	pub fn is_continued(&self) -> bool {
@@ -271,7 +271,7 @@ impl<T: Namespace> SpanExpr<T> {
 	}
 }
 
-impl<T: Namespace> Expr<T> {
+impl<T: Namespace + ?Sized> Expr<T> {
 	/// Checks if the expression is "continued",
 	/// that is when another expression is evaluated after the operation.
 	/// Such expression can be generated with a preceding `return` or `break` statement
@@ -292,17 +292,17 @@ impl<T: Namespace> Expr<T> {
 	}
 }
 
-pub struct MatchCase<T: Namespace> {
+pub struct MatchCase<T: Namespace + ?Sized> {
 	pub pattern: Pattern<T>,
 	pub expr: Expr<T>,
 }
 
-// pub enum BuildArgs<T: Namespace> {
+// pub enum BuildArgs<T: Namespace + ?Sized> {
 // 	Tuple(Vec<Expr<T>>),
 // 	Struct(Vec<Binding<T>>),
 // }
 
-// impl<T: Namespace> BuildArgs<T> {
+// impl<T: Namespace + ?Sized> BuildArgs<T> {
 // 	pub fn empty() -> Self {
 // 		BuildArgs::Tuple(Vec::new())
 // 	}
@@ -315,7 +315,7 @@ pub struct MatchCase<T: Namespace> {
 // 	}
 // }
 
-// pub struct Binding<T: Namespace> {
+// pub struct Binding<T: Namespace + ?Sized> {
 // 	pub id: T::Field,
 // 	pub expr: Expr<T>,
 // }

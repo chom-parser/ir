@@ -1,7 +1,8 @@
-use crate::{ty, Constant, Expr, Namespace};
+use std::fmt;
+use crate::{ty, Constant, Expr, Context, Namespace};
 
 /// Pattern.
-pub enum Pattern<T: Namespace> {
+pub enum Pattern<T: Namespace + ?Sized> {
 	/// Matches any value.
 	Any,
 
@@ -22,7 +23,7 @@ pub enum Pattern<T: Namespace> {
 	Or(Vec<Pattern<T>>),
 }
 
-impl<T: Namespace> Clone for Pattern<T>
+impl<T: Namespace + ?Sized> Clone for Pattern<T>
 where
 	T::Var: Clone,
 	T::Field: Clone,
@@ -38,7 +39,54 @@ where
 	}
 }
 
-// impl<T: Namespace> Clone for ConsArgs<T>
+impl<T: Namespace> super::eval::fmt::ContextDisplay<T> for Pattern<T> {
+	fn fmt(&self, context: &Context<T>, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			Self::Any => write!(f, "_"),
+			Self::Bind(x) => write!(f, "{}", context.id().var_ident(*x)),
+			Self::Literal(c) => write!(f, "{}", c),
+			Self::Cons(ty_ref, index, args) => {
+				let ty = context.ty(*ty_ref).unwrap();
+				write!(f, "{}", ty.id().ident(context.id()))?;
+
+				match ty.desc() {
+					ty::Desc::Enum(enm) => {
+						let variant = enm.variant(*index).unwrap();
+						write!(f, ".{}", variant.ident(context.id()))?;
+					},
+					_ => panic!("malformed value")
+				}
+
+				if args.is_empty() {
+					Ok(())
+				} else {
+					write!(f, "(")?;
+					for (i, a) in args.iter().enumerate() {
+						if i > 0 {
+							write!(f, ", ")?;
+						}
+
+						a.fmt(context, f)?;
+					}
+					write!(f, ")")
+				}
+			}
+			Self::Or(patterns) => {
+				for (i, p) in patterns.iter().enumerate() {
+					if i > 0 {
+						write!(f, " | ")?;
+					}
+
+					p.fmt(context, f)?;
+				}
+
+				Ok(())
+			}
+		}
+	}
+}
+
+// impl<T: Namespace + ?Sized> Clone for ConsArgs<T>
 // where
 // 	T::Var: Clone,
 // 	T::Field: Clone,
@@ -51,7 +99,7 @@ where
 // 	}
 // }
 
-// impl<T: Namespace> ConsArgs<T> {
+// impl<T: Namespace + ?Sized> ConsArgs<T> {
 // 	pub fn is_empty(&self) -> bool {
 // 		match self {
 // 			Self::Tuple(args) => args.is_empty(),
@@ -60,12 +108,12 @@ where
 // 	}
 // }
 
-pub struct Binding<T: Namespace> {
+pub struct Binding<T: Namespace + ?Sized> {
 	pub id: T::Field,
 	pub pattern: Pattern<T>,
 }
 
-impl<T: Namespace> Clone for Binding<T>
+impl<T: Namespace + ?Sized> Clone for Binding<T>
 where
 	T::Var: Clone,
 	T::Field: Clone,
@@ -78,7 +126,7 @@ where
 	}
 }
 
-impl<T: Namespace> Pattern<T> {
+impl<T: Namespace + ?Sized> Pattern<T> {
 	pub fn none() -> Self {
 		Self::Cons(
 			ty::Ref::Native(ty::Native::Option),

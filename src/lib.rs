@@ -37,7 +37,7 @@ pub struct Context<T: Namespace> {
 	native_types: NativeTypes<T>,
 }
 
-pub struct NativeTypes<T: Namespace> {
+pub struct NativeTypes<T: Namespace + ?Sized> {
 	unit: Type<T>,
 	option: Type<T>,
 	result: Type<T>,
@@ -49,7 +49,7 @@ pub struct NativeTypes<T: Namespace> {
 	loc: Type<T>
 }
 
-impl<T: Namespace> NativeTypes<T> {
+impl<T: Namespace + ?Sized> NativeTypes<T> {
 	pub fn new() -> Self {
 		use ty::Native;
 		Self {
@@ -97,7 +97,7 @@ impl<T: Namespace> NativeTypes<T> {
 }
 
 impl<T: Namespace> Context<T> {
-	pub fn new(ids: T) -> Self {
+	pub fn new(ids: T) -> Self where T: Sized {
 		let mut context = Self {
 			ids,
 			functions: Vec::new(),
@@ -116,6 +116,10 @@ impl<T: Namespace> Context<T> {
 
 	pub fn id_mut(&mut self) -> &mut T {
 		&mut self.ids
+	}
+
+	pub fn root_module(&self) -> &Module<T> {
+		&self.modules[0]
 	}
 
 	pub fn module(&self, index: u32) -> Option<&Module<T>> {
@@ -183,12 +187,12 @@ impl<T: Namespace> Context<T> {
 
 	pub fn parse_ty_expr(&self, string: &str) -> Result<Option<ty::Expr<T>>, InvalidTypeExpr> {
 		#[derive(Default)]
-		struct Node<T: Namespace> {
+		struct Node<T: Namespace + ?Sized> {
 			id: String,
 			args: Vec<ty::Expr<T>>
 		}
 
-		impl<T: Namespace> Node<T> {
+		impl<T: Namespace + ?Sized> Node<T> {
 			fn new() -> Self {
 				Self {
 					id: String::new(),

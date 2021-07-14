@@ -6,7 +6,11 @@ use crate::{
 use std::fmt;
 
 mod constant;
+mod ty;
 mod expr;
+mod pattern;
+mod module;
+mod function;
 
 pub trait PrettyPrint<T: Namespace> {
 	fn fmt(&self, f: &mut PrettyPrinter<T>) -> fmt::Result;
@@ -72,10 +76,29 @@ impl<'a, 'f, T: Namespace> PrettyPrinter<'a, 'f, T> {
 		write!(self.f, "\"{}\"", s)
 	}
 
+	pub fn write_var_id(&mut self, x: T::Var) -> fmt::Result {
+		self.write(self.context.id().var_ident(x).as_str())
+	}
+
+	pub fn write_module_id(&mut self, m: T::Module) -> fmt::Result {
+		self.write(self.context.id().module_ident(m).as_str())
+	}
+
+	pub fn write_ty_param(&mut self, p: T::Param) -> fmt::Result {
+		self.write(self.context.id().param_ident(p).as_str())
+	}
+
+	pub fn write_field(&mut self, f: T::Field) -> fmt::Result {
+		self.write(self.context.id().field_ident(f).as_str())
+	}
+
 	pub fn begin(&mut self) -> fmt::Result {
 		self.depth += 1;
-		write!(self.f, "\n")?;
+		self.sep()
+	}
 
+	pub fn sep(&mut self) -> fmt::Result {
+		write!(self.f, "\n")?;
 		for _ in 0..self.depth {
 			write!(self.f, "{}", self.tab)?
 		}
@@ -85,6 +108,6 @@ impl<'a, 'f, T: Namespace> PrettyPrinter<'a, 'f, T> {
 
 	pub fn end(&mut self) -> fmt::Result {
 		self.depth -= 1;
-		write!(self.f, "\n")
+		self.sep()
 	}
 }

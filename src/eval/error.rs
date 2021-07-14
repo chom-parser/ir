@@ -21,6 +21,12 @@ impl fmt::Display for Error {
 	}
 }
 
+impl fmt::Debug for Error {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		self.desc.fmt(f)
+	}
+}
+
 /// Error description.
 #[derive(Debug)]
 pub enum Desc {
@@ -74,7 +80,7 @@ pub enum Desc {
 	NoMatch,
 
 	/// Let match failed.
-	PatternMissmatch,
+	PatternMissmatch(String, String),
 
 	/// Trying to bind with a pattern union.
 	BindingPatternUnion,
@@ -136,7 +142,7 @@ impl fmt::Display for Desc {
 			Self::NotAnEnumType(_) => write!(f, "attempted to instanciate a non enum type using a variant"),
 			Self::InvalidFieldCount(expected, given) => write!(f, "invalid number of fields during instanciation: expected {}, found {}", expected, given),
 			Self::NoMatch => write!(f, "no pattern matches the given value"),
-			Self::PatternMissmatch => write!(f, "let-match failed"),
+			Self::PatternMissmatch(pattern, value) => write!(f, "let-match failed: the value `{}` does not match the pattern `{}`", value, pattern),
 			Self::BindingPatternUnion => write!(f, "attempted to bind with a pattern uniont"),
 			Self::NotAnEnumVariant => write!(f, "assumed that the value is an enum variant where it is not"),
 			Self::UnimplementedFunction => write!(f, "unimplemented function called"),
@@ -154,6 +160,7 @@ impl fmt::Display for Desc {
 }
 
 /// Error value.
+#[derive(Debug)]
 pub enum Value<'v> {
 	/// IO error.
 	IO(std::io::Error),

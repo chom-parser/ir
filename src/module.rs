@@ -1,7 +1,7 @@
 use super::{ty, Namespace};
 
 /// Module.
-pub struct Module<T: Namespace> {
+pub struct Module<T: Namespace + ?Sized> {
 	/// Index of the module in `Context::modules`.
 	index: Option<u32>,
 
@@ -26,7 +26,7 @@ pub struct Module<T: Namespace> {
 	functions: Vec<u32>,
 }
 
-impl<T: Namespace> Module<T> {
+impl<T: Namespace + ?Sized> Module<T> {
 	pub fn root() -> Self {
 		Self {
 			index: None,
@@ -101,7 +101,7 @@ impl<T: Namespace> Module<T> {
 	}
 }
 
-pub enum Id<T: Namespace> {
+pub enum Id<T: Namespace + ?Sized> {
 	/// Root module.
 	///
 	/// In Rust this is translated into `crate`.
@@ -111,7 +111,7 @@ pub enum Id<T: Namespace> {
 	Named(T::Module),
 }
 
-impl<T: Namespace> Id<T> {
+impl<T: Namespace + ?Sized> Id<T> {
 	pub fn as_nammed(&self) -> Option<&T::Module> {
 		match self {
 			Self::Named(id) => Some(id),

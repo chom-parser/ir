@@ -1,9 +1,11 @@
+use std::fmt;
 use source_span::{
 	Position,
 	Span,
 	Loc
 };
 use crate::{
+	Context,
 	Namespace,
 	Constant,
 	ty,
@@ -213,10 +215,10 @@ impl<'v> Value<'v> {
 		}
 	}
 
-	pub fn matches<T: Namespace>(&self, pattern: &Pattern<T>) -> Result<bool, Error> {
+	pub fn matches<T: Namespace + ?Sized>(&self, pattern: &Pattern<T>) -> Result<bool, Error> {
 		match (pattern, self) {
 			(Pattern::Any | Pattern::Bind(_), _) => Ok(true),
-			(Pattern::Literal(a), Self::Constant(b)) => Ok(a == b),
+			(Pattern::Literal(a), Self::Constant(b)) => Ok(a.matches(b)),
 			(Pattern::Cons(ty_a, va, patterns), Value::Instance(ty_b, data)) => {
 				if ty_a == ty_b {
 					match data {
@@ -257,6 +259,77 @@ impl<'v> Value<'v> {
 	}
 }
 
+impl<'v> fmt::Debug for Value<'v> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			Self::Constant(c) => write!(f, "Value::Constant({:?})", c),
+			Self::Instance(ty_ref, data) => write!(f, "Value::Instance({:?}, {:?})", ty_ref, data),
+			Self::Position(p) => write!(f, "Value::Position({:?})", p),
+			Self::Span(s) => write!(f, "Value::Span({:?})", s),
+			Self::Loc(l) => write!(f, "Value::Loc({:?})", l),
+			Self::Lexer(l) => write!(f, "Value::Lexer({:?})", l),
+			Self::Chars(c) => write!(f, "Value::Chars({:?})", c),
+			Self::Stack(s) => write!(f, "Value::Stack({:?})", s),
+			Self::Error(e) => write!(f, "Value::Error({:?})", e),
+			Self::Input(_) => write!(f, "Value::Input"),
+			Self::Output(_) => write!(f, "Value::Output"),
+			Self::Opaque(s) => write!(f, "Value::Opaque({:?})", s)
+		}
+	}
+}
+
+impl<'v, T: Namespace> super::fmt::ContextDisplay<T> for Value<'v> {
+	fn fmt(&self, context: &Context<T>, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			Self::Constant(c) => write!(f, "{}", c),
+			Self::Instance(ty_ref, data) => {
+				let ty = context.ty(*ty_ref).unwrap();
+				write!(f, "{}", ty.id().ident(context.id()))?;
+
+				let args = match data {
+					InstanceData::EnumVariant(index, args) => {
+						match ty.desc() {
+							ty::Desc::Enum(enm) => {
+								let variant = enm.variant(*index).unwrap();
+								write!(f, ".{}", variant.ident(context.id()))?;
+							},
+							_ => panic!("malformed value")
+						}
+
+						args
+					}
+					InstanceData::Struct(args) => args
+				};
+
+				if args.is_empty() {
+					Ok(())
+				} else {
+					write!(f, "(")?;
+					for (i, a) in args.iter().enumerate() {
+						if i > 0 {
+							write!(f, ", ")?;
+						}
+
+						a.fmt(context, f)?;
+					}
+					write!(f, ")")
+				}
+			},
+			Self::Position(pos) => write!(f, "position({})", pos),
+			Self::Span(span) => write!(f, "span({})", span),
+			Self::Loc(loc) => write!(f, "loc({}, {})", loc.as_ref().display_in(context), loc.span()),
+			Self::Lexer(_) => write!(f, "lexer"),
+			Self::Chars(_) => write!(f, "chars"),
+			Self::Stack(_) => write!(f, "stack"),
+			Self::Error(_) => write!(f, "error"),
+			Self::Input(_) => write!(f, "input"),
+			Self::Output(_) => write!(f, "output"),
+			Self::Opaque(s) => write!(f, "opaque({})", s)
+		}
+	}
+}
+
+#[derive(Debug)]
 pub enum InstanceData<'v> {
 	EnumVariant(u32, Vec<MaybeMoved<'v>>),
 	Struct(Vec<MaybeMoved<'v>>)
@@ -290,6 +363,7 @@ impl<'v> InstanceData<'v> {
 	}
 }
 
+#[derive(Debug)]
 pub enum MaybeMoved<'v> {
 	Here(Value<'v>),
 	Moved
@@ -348,6 +422,16 @@ impl<'v> MaybeMoved<'v> {
 	}
 }
 
+impl<'v, T: Namespace> super::fmt::ContextDisplay<T> for MaybeMoved<'v> {
+	fn fmt(&self, context: &Context<T>, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			Self::Here(v) => v.fmt(context, f),
+			Self::Moved => write!(f, "<moved>")
+		}
+	}
+}
+
+#[derive(Debug)]
 pub enum Borrowed<'a, 'v> {
 	Const(&'a Value<'v>),
 	Mut(&'a mut Value<'v>)

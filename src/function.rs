@@ -15,7 +15,7 @@ pub enum Owner {
 }
 
 /// Function signature.
-pub enum Signature<T: Namespace> {
+pub enum Signature<T: Namespace + ?Sized> {
 	/// Extern parser used by the lexer to process tokens.
 	/// 
 	/// The given `Ident` is a custom name used to build
@@ -40,7 +40,7 @@ pub enum Signature<T: Namespace> {
 	Lexer(ty::Expr<T>, ty::Expr<T>)
 }
 
-impl<T: Namespace> Signature<T> {
+impl<T: Namespace + ?Sized> Signature<T> {
 	pub fn arguments(&self) -> &[T::Var] {
 		match self {
 			Self::ExternParser(x, _) => std::slice::from_ref(x),
@@ -67,15 +67,22 @@ impl<T: Namespace> Signature<T> {
 			_ => false
 		}
 	}
+
+	pub fn borrows_mut(&self) -> bool {
+		match self {
+			Self::Lexer(_, _) => true,
+			_ => false
+		}
+	}
 }
 
-pub struct Function<T: Namespace> {
+pub struct Function<T: Namespace + ?Sized> {
 	owner: Owner,
 	signature: Signature<T>,
 	body: Option<Expr<T>>
 }
 
-impl<T: Namespace> Function<T> {
+impl<T: Namespace + ?Sized> Function<T> {
 	pub fn new(owner: Owner, signature: Signature<T>, body: Option<Expr<T>>) -> Self {
 		Self {
 			owner,
@@ -93,6 +100,10 @@ impl<T: Namespace> Function<T> {
 			Owner::Type(_) => true,
 			Owner::Module(_) => false
 		}
+	}
+
+	pub fn is_method_mut(&self) -> bool {
+		self.is_method() && self.signature.borrows_mut()
 	}
 
 	pub fn signature(&self) -> &Signature<T> {

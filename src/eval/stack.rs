@@ -4,6 +4,7 @@ use super::{
 	error::Desc as E
 };
 
+#[derive(Debug)]
 pub struct Stack<'v> {
 	inner: Vec<(Value<'v>, Value<'v>)>
 }

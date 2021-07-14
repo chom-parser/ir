@@ -6,7 +6,7 @@ use crate::{
 
 #[derive(Derivative)]
 #[derivative(Clone, Copy, PartialEq, Eq)]
-pub enum Param<T: Namespace> {
+pub enum Param<T: Namespace + ?Sized> {
 	Defined(T::Param),
 	Native(NativeParam)
 }
@@ -21,7 +21,7 @@ pub enum NativeParam {
 }
 
 /// Type definition.
-pub struct Type<T: Namespace> {
+pub struct Type<T: Namespace + ?Sized> {
 	/// Index of the containing module.
 	module: Option<u32>,
 
@@ -38,7 +38,7 @@ pub struct Type<T: Namespace> {
 	methods: Vec<u32>
 }
 
-impl<T: Namespace> Type<T> {
+impl<T: Namespace + ?Sized> Type<T> {
 	/// Creates a new opaque type from a grammar extern type.
 	pub fn opaque(module: u32, id: T::Type) -> Self {
 		Self {
@@ -126,22 +126,21 @@ impl<T: Namespace> Type<T> {
 	}
 }
 
-pub enum Id<T: Namespace> {
+pub enum Id<T: Namespace + ?Sized> {
 	Native(Native),
 	Defined(T::Type)
 }
 
-// impl<T: Namespace> Id<T> {
-// 	pub fn from_ident(ns: &T, id: Ident) -> Self {
-// 		match id.as_str() {
-// 			"unit" => Self::Unit(Native::Unit),
-// 			"option" => Self::Native(Native::Option),
-// 			""
-// 		}
-// 	}
-// }
+impl<T: Namespace + ?Sized> Id<T> {
+	pub fn ident(&self, ns: &T) -> Ident {
+		match self {
+			Self::Native(n) => n.ident(),
+			Self::Defined(i) => ns.type_ident(*i)
+		}
+	}
+}
 
-impl<T: Namespace> Clone for Id<T> {
+impl<T: Namespace + ?Sized> Clone for Id<T> {
 	fn clone(&self) -> Self {
 		match self {
 			Self::Native(n) => Self::Native(*n),
@@ -150,7 +149,7 @@ impl<T: Namespace> Clone for Id<T> {
 	}
 }
 
-impl<T: Namespace> Copy for Id<T> {}
+impl<T: Namespace + ?Sized> Copy for Id<T> {}
 
 /// Type reference.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -173,7 +172,7 @@ impl Ref {
 	}
 }
 
-pub enum Desc<T: Namespace> {
+pub enum Desc<T: Namespace + ?Sized> {
 	Opaque,
 	Enum(Enum<T>),
 	Struct(Struct<T>),
@@ -181,7 +180,7 @@ pub enum Desc<T: Namespace> {
 	Lexer
 }
 
-impl<T: Namespace> Desc<T> {
+impl<T: Namespace + ?Sized> Desc<T> {
 	pub fn is_lexer(&self) -> bool {
 		match self {
 			Self::Lexer => true,
@@ -191,11 +190,11 @@ impl<T: Namespace> Desc<T> {
 }
 
 /// Enumerator type.
-pub struct Enum<T: Namespace> {
+pub struct Enum<T: Namespace + ?Sized> {
 	variants: Vec<Variant<T>>,
 }
 
-impl<T: Namespace> Enum<T> {
+impl<T: Namespace + ?Sized> Enum<T> {
 	pub fn new() -> Self {
 		Self {
 			variants: Vec::new(),
@@ -234,7 +233,7 @@ impl<T: Namespace> Enum<T> {
 }
 
 /// Enum variant.
-pub enum Variant<T: Namespace> {
+pub enum Variant<T: Namespace + ?Sized> {
 	/// Baked-in variant.
 	Native(NativeVariant),
 
@@ -242,7 +241,7 @@ pub enum Variant<T: Namespace> {
 	Defined(T::Variant, VariantDesc<T>),
 }
 
-impl<T: Namespace> Variant<T> {
+impl<T: Namespace + ?Sized> Variant<T> {
 	pub fn len(&self) -> u32 {
 		match self {
 			Self::Native(t) => t.parameters::<T>().len() as u32,
@@ -254,6 +253,13 @@ impl<T: Namespace> Variant<T> {
 		match self {
 			Self::Native(t) => t.parameters::<T>().is_empty(),
 			Self::Defined(_, desc) => desc.is_empty(),
+		}
+	}
+
+	pub fn ident(&self, ns: &T) -> Ident {
+		match self {
+			Self::Native(n) => n.ident(),
+			Self::Defined(i, _) => ns.variant_ident(*i)
 		}
 	}
 
@@ -273,7 +279,7 @@ impl<T: Namespace> Variant<T> {
 	}
 }
 
-pub enum VariantDesc<T: Namespace> {
+pub enum VariantDesc<T: Namespace + ?Sized> {
 	/// The variant contains untagged parameters.
 	///
 	/// The given list is not empty.
@@ -284,7 +290,7 @@ pub enum VariantDesc<T: Namespace> {
 	Struct(Struct<T>),
 }
 
-impl<T: Namespace> VariantDesc<T> {
+impl<T: Namespace + ?Sized> VariantDesc<T> {
 	pub fn empty() -> Self {
 		Self::Tuple(Vec::new())
 	}
@@ -302,11 +308,11 @@ impl<T: Namespace> VariantDesc<T> {
 }
 
 /// Structure type.
-pub struct Struct<T: Namespace> {
+pub struct Struct<T: Namespace + ?Sized> {
 	fields: Vec<Field<T>>,
 }
 
-impl<T: Namespace> Struct<T> {
+impl<T: Namespace + ?Sized> Struct<T> {
 	pub fn new() -> Self {
 		Self { fields: Vec::new() }
 	}
@@ -331,7 +337,7 @@ impl<T: Namespace> Struct<T> {
 	}
 }
 
-pub struct Field<T: Namespace> {
+pub struct Field<T: Namespace + ?Sized> {
 	pub id: T::Field,
 	pub ty: Expr<T>,
 }
@@ -344,7 +350,7 @@ pub struct Field<T: Namespace> {
 /// Type expression.
 #[derive(Derivative)]
 #[derivative(Clone)]
-pub enum Expr<T: Namespace> {
+pub enum Expr<T: Namespace + ?Sized> {
 	/// Type variable.
 	Var(Param<T>),
 
@@ -352,7 +358,7 @@ pub enum Expr<T: Namespace> {
 	Instance(Ref, Vec<Expr<T>>),
 }
 
-impl<T: Namespace> PartialEq for Expr<T> {
+impl<T: Namespace + ?Sized> PartialEq for Expr<T> {
 	fn eq(&self, other: &Self) -> bool {
 		match (self, other) {
 			(Self::Var(x), Self::Var(y)) => x == y,
@@ -364,9 +370,9 @@ impl<T: Namespace> PartialEq for Expr<T> {
 	}
 }
 
-impl<T: Namespace> Eq for Expr<T> {}
+impl<T: Namespace + ?Sized> Eq for Expr<T> {}
 
-impl<T: Namespace> Expr<T> {
+impl<T: Namespace + ?Sized> Expr<T> {
 	pub fn as_reference(&self) -> Option<Ref> {
 		match self {
 			Self::Instance(r, _) => Some(*r),
@@ -436,6 +442,20 @@ impl Native {
 		}
 	}
 
+	pub fn ident(&self) -> Ident {
+		match self {
+			Self::Unit => Ident::new("unit").unwrap(),
+			Self::Heap => Ident::new("heap").unwrap(),
+			Self::Option => Ident::new("option").unwrap(),
+			Self::Result => Ident::new("result").unwrap(),
+			Self::List => Ident::new("list").unwrap(),
+			Self::Position => Ident::new("position").unwrap(),
+			Self::Span => Ident::new("span").unwrap(),
+			Self::Loc => Ident::new("loc").unwrap(),
+			Self::Stack => Ident::new("stack").unwrap(),
+		}
+	}
+
 	/// Checks if an instance of the given type may be copied
 	/// iff its parameter instances are can also be copied.
 	pub fn is_copiable(&self) -> bool {
@@ -456,7 +476,26 @@ pub enum NativeVariant {
 }
 
 impl NativeVariant {
-	pub fn parameters<T: Namespace>(&self) -> &[Expr<T>] {
+	pub fn from_ident(id: &Ident) -> Option<Self> {
+		match id.as_str() {
+			"some" => Some(Self::Some),
+			"none" => Some(Self::None),
+			"ok" => Some(Self::Ok),
+			"err" => Some(Self::Err),
+			_ => None
+		}
+	}
+
+	pub fn ident(&self) -> Ident {
+		match self {
+			Self::Some => Ident::new("some").unwrap(),
+			Self::None => Ident::new("none").unwrap(),
+			Self::Ok => Ident::new("ok").unwrap(),
+			Self::Err => Ident::new("err").unwrap(),
+		}
+	}
+
+	pub fn parameters<T: Namespace + ?Sized>(&self) -> &[Expr<T>] {
 		match self {
 			Self::Some => &[Expr::Var(Param::Native(NativeParam::Value))],
 			Self::Ok => &[Expr::Var(Param::Native(NativeParam::Value))],
