@@ -69,7 +69,7 @@ pub enum Expr<T: Namespace + ?Sized> {
 
 	/// Call the given function with an optional object
 	/// that will serve as `this`.
-	Call(u32, Option<T::Var>, Vec<Expr<T>>),
+	Call(u32, Option<(T::Var, bool)>, Vec<Expr<T>>),
 
 	/// Tail recursion.
 	///

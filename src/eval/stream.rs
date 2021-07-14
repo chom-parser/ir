@@ -6,7 +6,7 @@ use crate::{
 use super::{
 	Value,
 	value,
-	Environment,
+	Frame,
 	Error,
 	error::Desc as E
 };

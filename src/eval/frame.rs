@@ -31,18 +31,15 @@ use super::{
 	stream
 };
 
-pub struct Environment<'a, 'v, 'e, T: Namespace> {
-	/// Context.
-	context: &'a Context<T>,
-
+pub struct Frame<'e, T: Namespace> {
 	/// The current variables values.
-	vars: HashMap<T::Var, Variable<'v>>,
+	bindings: HashMap<T::Var, Binding>,
 
 	/// The current `Var::This`.
-	this: Option<value::Borrowed<'a, 'v>>,
+	this: Option<Reference>,
 
-	/// Stack.
-	stack: Vec<Frame<'v, 'e, T>>
+	/// Loop stack.
+	stack: Vec<LoopFrame<'e, T>>
 }
 
 macro_rules! func_call {
@@ -63,7 +60,9 @@ macro_rules! func_call {
 						}
 
 						env.this = $this;
-						env.eval(body)
+						let mut evaluator = super::Evaluator::new(env);
+						evaluator.eval(body)
+						// env.eval(body)
 					} else {
 						$self.err(E::InvalidNumberOfArguments(expected_len, len))
 					}
@@ -98,12 +97,11 @@ macro_rules! func_call {
 	};
 }
 
-impl<'a, 'v, 'e, T: Namespace> Environment<'a, 'v, 'e, T> {
-	pub fn new(context: &'a Context<T>) -> Self {
+impl<'e, T: Namespace> Frame<'e, T> {
+	pub fn new(this: Option<Reference>) -> Self {
 		Self {
-			context,
-			vars: HashMap::new(),
-			this: None,
+			bindings: HashMap::new(),
+			this,
 			stack: Vec::new()
 		}
 	}
@@ -116,135 +114,90 @@ impl<'a, 'v, 'e, T: Namespace> Environment<'a, 'v, 'e, T> {
 		Err(self.error(e))
 	}
 
-	pub fn context(&self) -> &'a Context<T> {
-		self.context
+	pub fn this(&self) -> Option<Reference> {
+		self.this
 	}
 
-	pub fn this(&self) -> Option<&value::Borrowed<'a, 'v>> {
-		self.this.as_ref()
-	}
-
-	pub fn set_this(&mut self, this: value::Borrowed<'a, 'v>) {
+	pub fn set_this(&mut self, this: Reference) {
 		self.this = Some(this)
 	}
 
-	pub fn get(&self, x: T::Var) -> Result<&Variable<'v>, Error> {
-		for frame in self.stack.iter().rev() {
-			if let Some(v) = frame.vars.get(&x) {
-				return Ok(v)
+	pub fn get(&self, x: Var<T>) -> Result<Reference, Error> {
+		match x {
+			Var::This => self.this.ok_or_else(|| self.error(E::NoThis)),
+			Var::Defined(x) => {
+				for frame in self.stack.iter().rev() {
+					if let Some(b) = frame.bindings.get(&x) {
+						return b.bound()
+					}
+				}
+		
+				match self.bindings.get(&x) {
+					Some(b) => b.bound(),
+					None => self.err(E::UnboundVariable)
+				}
+			}
+		}
+	}
+
+	pub fn take(&mut self, x: T::Var) -> Result<usize, Error> {
+		for frame in self.stack.iter_mut().rev() {
+			if let Some(b) = frame.bindings.get_mut(&x) {
+				return Ok(b.take()?.addr)
 			}
 		}
 
-		match self.vars.get(&x) {
-			Some(v) => Ok(v),
+		match self.bindings.get_mut(&x) {
+			Some(b) => Ok(b.take()?.addr),
 			None => self.err(E::UnboundVariable)
 		}
 	}
 
-	pub fn borrow(&self, x: Var<T>) -> Result<&Value<'v>, Error> {
-		match x {
-			Var::This => Ok(self.this.as_ref().ok_or_else(|| self.error(E::NoThis))?.borrow()),
-			Var::Defined(x) => self.get(x)?.value.borrow()
-		}
+	pub fn borrow(&self, x: Var<T>) -> Result<usize, Error> {
+		Ok(self.get(x)?.addr)
 	}
 
-	pub fn get_mut(&mut self, x: T::Var) -> Result<&mut Variable<'v>, Error> {
-		for frame in self.stack.iter_mut().rev() {
-			if let Some(v) = frame.vars.get_mut(&x) {
-				return Ok(v)
-			}
-		}
-
-		match self.vars.get_mut(&x) {
-			Some(v) => Ok(v),
-			None => Err(Error::new(E::UnboundVariable))
-		}
-	}
-
-	pub fn borrow_mut(&mut self, x: Var<T>) -> Result<&mut Value<'v>, Error> {
-		match x {
-			Var::This => self.this.as_mut().ok_or_else(|| Error::new(E::NoThis))?.borrow_mut(),
-			Var::Defined(x) => self.get_mut(x)?.value.borrow_mut()
-		}
-	}
-
-	pub fn bind(&mut self, x: T::Var, v: Variable<'v>) {
-		if let Some(frame) = self.stack.last_mut() {
-			frame.vars.insert(x, v);
+	pub fn borrow_mut(&self, x: Var<T>) -> Result<usize, Error> {
+		let r = self.get(x)?;
+		if r.mutable {
+			Ok(r.addr)
 		} else {
-			self.vars.insert(x, v);
+			Err(Error::new(E::NotMutable))
 		}
 	}
 
-	pub fn instanciate<V>(&self, ty_ref: ty::Ref, args: V) -> Result<Value<'v>, Error> where V: IntoIterator<Item=Value<'v>> {
-		match ty_ref {
-			ty::Ref::Native(n) => {
-				let args: Vec<_> = args.into_iter().collect();
-				match n {
-					ty::Native::Stack => {
-						if args.is_empty() {
-							Ok(Value::Stack(Stack::new()))
-						} else {
-							self.err(E::InvalidNumberOfArguments(0, args.len() as u32))
-						}
-					},
-					ty::Native::Position => {
-						if args.is_empty() {
-							Ok(Value::Position(Position::default()))
-						} else {
-							self.err(E::InvalidNumberOfArguments(0, args.len() as u32))
-						}
+	pub fn bind(&mut self, x: T::Var, mutable: bool, addr: usize) {
+		if let Some(frame) = self.stack.last_mut() {
+			frame.bindings.insert(x, Binding::new(mutable, addr));
+		} else {
+			self.bindings.insert(x, Binding::new(mutable, addr));
+		}
+	}
+
+	pub fn begin_loop(&mut self, label: T::Label, args: Vec<Var<T>>, expr: &'e Expr<T>) {
+		self.stack.push(LoopFrame::new(label, args, expr))
+	}
+
+	pub fn continue_loop(&mut self, label: T::Label, args: &[Var<T>]) -> Result<&'e Expr<T>, Error> {
+		loop {
+			match self.stack.last() {
+				Some(frame) => {
+					if frame.label == label {
+						break
+					} else {
+						self.stack.pop();
 					}
-					ty::Native::Span => {
-						if args.is_empty() {
-							Ok(Value::Span(Span::default()))
-						} else {
-							self.err(E::InvalidNumberOfArguments(0, args.len() as u32))
-						}
-					}
-					_ => self.err(E::NotAStructType(ty_ref))
-				}
-			},
-			ty::Ref::Defined(_) => {
-				let ty = self.context.ty(ty_ref).unwrap();
-				let expected_len = match ty.desc() {
-					ty::Desc::Struct(strct) => strct.len(),
-					ty::Desc::TupleStruct(args) => args.len() as u32,
-					ty::Desc::Lexer => return {
-						// A lexer is a bit special.
-						let args: Vec<_> = args.into_iter().collect();
-						if args.len() == 1 {
-							let source = args.into_iter().next().unwrap().into_input()?;
-							let lexer_method = ty.methods().iter().find(|f_index| {
-								self.context.function(**f_index).unwrap().signature().is_lexer()
-							});
-
-							match lexer_method {
-								Some(lexer_method) => Ok(Value::Lexer(Lexer::new(*lexer_method, source))),
-								None => self.err(E::UndefinedLexerMethod)
-							}
-						} else {
-							self.err(E::InvalidNumberOfArguments(1, args.len() as u32))
-						}
-					},
-					_ => return self.err(E::NotAStructType(ty_ref))
-				};
-
-				let args: Vec<_> = args.into_iter().map(|v| value::MaybeMoved::new(v)).collect();
-				let len = args.len() as u32;
-				if len == expected_len {
-					// TODO check types.
-					// let mut eargs = Vec::new();
-					// for a in args {
-					// 	eargs.push(value::MaybeMoved::new(self.eval(a)?));
-					// 	// TODO check types.
-					// }
-
-					Ok(Value::Instance(ty_ref, value::InstanceData::Struct(args)))
-				} else {
-					self.err(E::InvalidFieldCount(expected_len, len))
-				}
+				},
+				None => return self.err(E::UnreachableLabel)
 			}
+		}
+
+		let frame = self.stack.last_mut().unwrap();
+		if frame.args == *args {
+			frame.clear();
+			Ok(frame.expr)
+		} else {
+			self.err(E::RecursionArgsMissmatch)
 		}
 	}
 
@@ -365,7 +318,7 @@ impl<'a, 'v, 'e, T: Namespace> Environment<'a, 'v, 'e, T> {
 	// 			func_call!(self, f_index, this, eargs)
 	// 		}
 	// 		Expr::TailRecursion { label, args, body } => { eprintln!("loop");
-	// 			self.stack.push(Frame::new(*label, args.clone(), body));
+	// 			self.stack.push(LoopFrame::new(*label, args.clone(), body));
 	// 			self.eval(body)
 	// 		}
 	// 		Expr::Recurse(label, args) => { eprintln!("continue");
@@ -531,94 +484,75 @@ impl<'a, 'v, 'e, T: Namespace> Environment<'a, 'v, 'e, T> {
 	// 		}
 	// 	}
 	// }
+}
 
-	pub fn let_match(&mut self, value: Value<'v>, pattern: &Pattern<T>) -> Result<(), Error> {
-		use super::fmt::ContextDisplay;
-		match (pattern, value) {
-			(Pattern::Any, _) => (),
-			(Pattern::Bind(x), value) => { self.bind(*x, Variable::new(value, false)); },
-			(Pattern::Literal(a), Value::Constant(b)) => {
-				if !a.matches(&b) {
-					return self.err(E::PatternMissmatch(
-						format!("{}", pattern.display_in(self.context())), 
-						format!("{}", Value::Constant(b).display_in(self.context())), 
-					))
-				}
-			},
-			(Pattern::Cons(ty_a, va, patterns), Value::Instance(ty_b, data)) => {
-				if *ty_a == ty_b {
-					match data {
-						value::InstanceData::EnumVariant(vb, args) => {
-							let len = args.len() as u32;
-							let expected_len = patterns.len() as u32;
-							if *va == vb {
-								if expected_len == len {
-									for (i, a) in args.into_iter().enumerate() {
-										self.let_match(a.unwrap()?, &patterns[i])?
-									}
-								} else {
-									return self.err(E::InvalidFieldCount(len, expected_len))
-								}
-							} else {
-								return self.err(E::PatternMissmatch(
-									format!("{}", pattern.display_in(self.context())), 
-									format!("{}", Value::Instance(ty_b, value::InstanceData::EnumVariant(vb, args)).display_in(self.context())), 
-								))
-							}
-						},
-						_ => return self.err(E::NotAnEnumVariant)
-					}
-				} else {
-					return self.err(E::IncompatibleType)
-				}
-			},
-			(Pattern::Or(patterns), _) => {
-				if patterns.iter().any(Pattern::is_bound) {
-					return self.err(E::BindingPatternUnion)
-				}
-			},
-			(pattern, value) => return self.err(E::PatternMissmatch(
-				format!("{}", pattern.display_in(self.context())), 
-				format!("{}", value.display_in(self.context())), 
-			))
-		}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Reference {
+	pub mutable: bool,
+	pub addr: usize
+}
 
-		Ok(())
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Binding {
+	Moved,
+	Bound(Reference)
+}
+
+impl Binding {
+	pub fn new(mutable: bool, addr: usize) -> Self {
+		Self::Bound(Reference { mutable, addr })
 	}
-}
 
-pub struct Variable<'v> {
-	mutable: bool,
-	value: value::MaybeMoved<'v>
-}
-
-impl<'v> Variable<'v> {
-	pub fn new(value: Value<'v>, mutable: bool) -> Self {
-		Self {
-			mutable,
-			value: value::MaybeMoved::new(value)
+	pub fn bound(&self) -> Result<Reference, Error> {
+		match self {
+			Self::Moved => Err(Error::new(E::ValueMoved)),
+			Self::Bound(r) => Ok(*r)
 		}
 	}
 
-	pub fn update(&mut self, new_value: Value<'v>) -> Result<(), Error> {
-		if self.mutable {
-			self.value = value::MaybeMoved::new(new_value);
-			Ok(())
-		} else {
-			Err(Error::new(E::NotMutable))
+	pub fn take(&mut self) -> Result<Reference, Error> {
+		match *self {
+			Self::Moved => Err(Error::new(E::ValueAlreadyMoved)),
+			Self::Bound(r) => {
+				*self = Self::Moved;
+				Ok(r)
+			}
 		}
-	}
-
-	pub fn value(&mut self) -> &value::MaybeMoved<'v> {
-		&self.value
-	}
-
-	pub fn value_mut(&mut self) -> &mut value::MaybeMoved<'v> {
-		&mut self.value
 	}
 }
 
-pub struct Frame<'v, 'e, T: Namespace> {
+// pub struct Variable<'v> {
+// 	mutable: bool,
+// 	value: value::MaybeMoved<'v>
+// }
+
+// impl<'v> Variable<'v> {
+// 	pub fn new(value: Value<'v>, mutable: bool) -> Self {
+// 		Self {
+// 			mutable,
+// 			value: value::MaybeMoved::new(value)
+// 		}
+// 	}
+
+// 	pub fn update(&mut self, new_value: Value<'v>) -> Result<(), Error> {
+// 		if self.mutable {
+// 			self.value = value::MaybeMoved::new(new_value);
+// 			Ok(())
+// 		} else {
+// 			Err(Error::new(E::NotMutable))
+// 		}
+// 	}
+
+// 	pub fn value(&mut self) -> &value::MaybeMoved<'v> {
+// 		&self.value
+// 	}
+
+// 	pub fn value_mut(&mut self) -> &mut value::MaybeMoved<'v> {
+// 		&mut self.value
+// 	}
+// }
+
+pub struct LoopFrame<'e, T: Namespace> {
 	label: T::Label,
 
 	args: Vec<Var<T>>,
@@ -626,20 +560,20 @@ pub struct Frame<'v, 'e, T: Namespace> {
 	expr: &'e Expr<T>,
 
 	/// Variables local to the frame.
-	vars: HashMap<T::Var, Variable<'v>>,
+	bindings: HashMap<T::Var, Binding>,
 }
 
-impl<'v, 'e, T: Namespace> Frame<'v, 'e, T> {
+impl<'e, T: Namespace> LoopFrame<'e, T> {
 	pub fn new(label: T::Label, args: Vec<Var<T>>, expr: &'e Expr<T>) -> Self {
 		Self {
 			label,
 			args,
 			expr,
-			vars: HashMap::new()
+			bindings: HashMap::new()
 		}
 	}
 
 	pub fn clear(&mut self) {
-		self.vars.clear()
+		self.bindings.clear()
 	}
 }

@@ -143,7 +143,11 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 			Self::Call(index, this, args) => {
 				ppf.write("call ")?;
 				let f = ppf.context().function(*index).unwrap();
-				if let Some(x) = this {
+				if let Some((x, mutable)) = this {
+					if *mutable {
+						ppf.write("mut ")?;
+					}
+
 					ppf.write(ppf.context().id().var_ident(*x).as_str())?;
 					ppf.write(".")?;
 				}
