@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[derive(Derivative)]
-#[derivative(Clone, Copy, PartialEq, Eq)]
+#[derivative(Clone(bound=""), Copy(bound=""), PartialEq(bound=""), Eq(bound=""))]
 pub enum Param<T: Namespace + ?Sized> {
 	Defined(T::Param),
 	Native(NativeParam)
@@ -349,7 +349,7 @@ pub struct Field<T: Namespace + ?Sized> {
 
 /// Type expression.
 #[derive(Derivative)]
-#[derivative(Clone)]
+#[derivative(Clone(bound=""))]
 pub enum Expr<T: Namespace + ?Sized> {
 	/// Type variable.
 	Var(Param<T>),

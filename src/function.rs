@@ -1,6 +1,5 @@
 use crate::{
 	Namespace,
-	Ident,
 	ty,
 	Expr
 };
@@ -55,8 +54,9 @@ pub struct Signature<T: Namespace + ?Sized> {
 	return_ty: ty::Expr<T>
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Marker {
-	ExternParser(Ident),
+	ExternParser,
 	UndefinedChar,
 	Parser,
 	Lexer
@@ -79,7 +79,7 @@ impl Marker {
 
 	pub fn is_extern_parser(&self) -> bool {
 		match self {
-			Self::ExternParser(_) => true,
+			Self::ExternParser => true,
 			_ => false
 		}
 	}
@@ -119,9 +119,9 @@ impl Marker {
 // }
 
 impl<T: Namespace + ?Sized> Signature<T> {
-	pub fn extern_parser(id: Ident, x: T::Var, target_ty: ty::Expr<T>, error_ty: ty::Expr<T>) -> Self {
+	pub fn extern_parser(x: T::Var, target_ty: ty::Expr<T>, error_ty: ty::Expr<T>) -> Self {
 		Self {
-			marker: Some(Marker::ExternParser(id)),
+			marker: Some(Marker::ExternParser),
 			mutates: false,
 			args: vec![Arg::new(
 				x,
@@ -145,9 +145,9 @@ impl<T: Namespace + ?Sized> Signature<T> {
 		}
 	}
 
-	pub fn lexer(lexer: T::Var, token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>) -> Self {
+	pub fn lexer(token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>) -> Self {
 		Self {
-			marker: Some(Marker::Parser),
+			marker: Some(Marker::Lexer),
 			mutates: true,
 			args: vec![],
 			return_ty: ty::Expr::result(token_ty, lexer_error_ty)
@@ -175,6 +175,10 @@ impl<T: Namespace + ?Sized> Signature<T> {
 		&self.args
 	}
 
+	pub fn return_type(&self) -> &ty::Expr<T> {
+		&self.return_ty
+	}
+
 	pub fn arity(&self) -> u32 {
 		self.args.len() as u32
 	}
@@ -195,14 +199,16 @@ impl<T: Namespace + ?Sized> Signature<T> {
 
 pub struct Function<T: Namespace + ?Sized> {
 	owner: Owner,
+	id: T::Function,
 	signature: Signature<T>,
 	body: Option<Expr<T>>
 }
 
 impl<T: Namespace + ?Sized> Function<T> {
-	pub fn new(owner: Owner, signature: Signature<T>, body: Option<Expr<T>>) -> Self {
+	pub fn new(owner: Owner, id: T::Function, signature: Signature<T>, body: Option<Expr<T>>) -> Self {
 		Self {
 			owner,
+			id,
 			signature,
 			body
 		}
@@ -210,6 +216,10 @@ impl<T: Namespace + ?Sized> Function<T> {
 
 	pub fn owner(&self) -> Owner {
 		self.owner
+	}
+
+	pub fn id(&self) -> T::Function {
+		self.id
 	}
 
 	pub fn is_method(&self) -> bool {

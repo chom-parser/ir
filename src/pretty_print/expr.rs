@@ -151,7 +151,7 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 					ppf.write(ppf.context().id().var_ident(*x).as_str())?;
 					ppf.write(".")?;
 				}
-				super::function::function_id(ppf, f.signature())?;
+				ppf.write_function_id(f.id())?;
 				ppf.write("(")?;
 				for (i, a) in args.iter().enumerate() {
 					if i > 0 {

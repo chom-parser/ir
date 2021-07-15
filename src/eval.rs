@@ -281,19 +281,19 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 	}
 
 	fn borrow(&self, x: Var<T>) -> Result<&Value<'v>, Error> {
-		Ok(&self.memory[self.frame().borrow(x)?])
+		Ok(&self.memory[self.frame().borrow(self.context().id(), x)?])
 	}
 
 	fn borrow_mut(&mut self, x: Var<T>) -> Result<&mut Value<'v>, Error> {
-		let addr = self.frame().borrow_mut(x)?;
+		let addr = self.frame().borrow_mut(self.context().id(), x)?;
 		Ok(&mut self.memory[addr])
 	}
 
 	fn reference_to(&self, x: Var<T>, mutable: bool) -> Result<Reference, Error> {
 		let addr = if mutable {
-			self.frame().borrow_mut(x)?
+			self.frame().borrow_mut(self.context().id(), x)?
 		} else {
-			self.frame().borrow(x)?
+			self.frame().borrow(self.context().id(), x)?
 		};
 
 		Ok(Reference {
@@ -303,13 +303,14 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 	}
 
 	fn take(&mut self, x: Var<T>) -> Result<Value<'v>, Error> {
-		let addr = self.frame().borrow(x)?;
+		let addr = self.frame().borrow(self.context().id(), x)?;
 		if self.memory[addr].is_copiable() {
 			Ok(self.memory[addr].copy()?)
 		} else {
 			match x {
 				Var::Defined(x) => {
-					self.frame_mut().take(x)?;
+					let ns = self.context().id();
+					self.frame_mut().take(ns, x)?;
 					Ok(self.memory.remove(addr))
 				},
 				Var::This => {
@@ -509,6 +510,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					Expr::Stream(stream, e) => {
 						match e {
 							StreamExpr::Pull(x, next) => {
+								eprintln!("PULL");
 								enum StreamAction<'v> {
 									CallMethod(u32),
 									Return(Value<'v>)
@@ -606,8 +608,9 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						self.actions.push(Action::Eval(next))
 					}
 					Expr::Check(x, e, next) => {
-						self.actions.push(Action::Check(*x, e));
-						self.actions.push(Action::Eval(next))
+						eprintln!("CHECK1");
+						self.actions.push(Action::Check(*x, next));
+						self.actions.push(Action::Eval(e))
 					}
 					Expr::Error(e) => {
 						match e {
@@ -690,7 +693,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							self.stack.push(Frame::new(this));
 
 							for (i, a) in args.into_iter().enumerate() {
-								let arg = f.signature().arguments()[i];
+								let arg = &f.signature().arguments()[i];
 								self.bind(arg.id(), arg.is_mutable(), a)
 							}
 
@@ -713,7 +716,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 									return self.err(E::InvalidNumberOfArguments(1, len))
 								}
 							}
-							Some(function::Marker::ExternParser(_)) => {
+							Some(function::Marker::ExternParser) => {
 								if len == 1 {
 									let arg = args.into_iter().next().unwrap().into_string()?;
 									self.values.push(Value::Opaque(arg));
@@ -768,6 +771,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 				self.values.push(Value::Span(a.union(b)))
 			}
 			Action::Check(x, next) => {
+				eprintln!("CHECK2");
 				let value = self.pop_value();
 				if value.is_err() {
 					self.values.push(value)

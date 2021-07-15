@@ -84,6 +84,10 @@ impl<'a, 'f, T: Namespace> PrettyPrinter<'a, 'f, T> {
 		self.write(self.context.id().module_ident(m).as_str())
 	}
 
+	pub fn write_function_id(&mut self, m: T::Function) -> fmt::Result {
+		self.write(self.context.id().function_ident(m).as_str())
+	}
+
 	pub fn write_ty_param(&mut self, p: T::Param) -> fmt::Result {
 		self.write(self.context.id().param_ident(p).as_str())
 	}

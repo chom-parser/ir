@@ -1,5 +1,8 @@
 use std::fmt;
-use crate::ty;
+use crate::{
+	Ident,
+	ty
+};
 
 /// Error occuring during evaluation.
 pub struct Error {
@@ -45,7 +48,7 @@ pub enum Desc {
 	CannotMoveOut,
 
 	/// Undefined variable.
-	UnboundVariable,
+	UnboundVariable(Ident),
 
 	/// Attempted to get a struct/enum field from a value that
 	/// is not a struct/enum variant.
@@ -132,7 +135,7 @@ impl fmt::Display for Desc {
 			Self::ValueMoved => write!(f, "cannot borrow moved value"),
 			Self::ValueAlreadyMoved => write!(f, "value has already been moved"),
 			Self::CannotMoveOut => write!(f, "cannot move out of borrowed value"),
-			Self::UnboundVariable => write!(f, "unbound variable"),
+			Self::UnboundVariable(id) => write!(f, "unbound variable `{}`", id),
 			Self::NotAnInstance => write!(f, "attempted to get a struct field from a non struct type instance"),
 			Self::IncompatibleType => write!(f, "type missmatch"),
 			Self::GetFieldFromNonStruct => write!(f, "attempted to get a struct field from an enum type instance"),

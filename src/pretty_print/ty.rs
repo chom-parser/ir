@@ -98,12 +98,14 @@ impl<T: Namespace> PrettyPrint<T> for ty::Expr<T> {
 			ty::Expr::Instance(ty_ref, args) => {
 				ty_ref.fmt(ppf)?;
 				if !args.is_empty() {
+					ppf.write("(")?;
 					for (i, a) in args.iter().enumerate() {
 						if i > 0 {
 							ppf.write(",")?;
 						}
 						a.fmt(ppf)?;
 					}
+					ppf.write(")")?;
 				}
 				Ok(())
 			}
@@ -137,17 +139,7 @@ impl<T: Namespace> PrettyPrint<T> for ty::Ref {
 
 impl<T: Namespace> PrettyPrint<T> for ty::Native {
 	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
-		match self {
-			Self::Unit => ppf.write("unit"),
-			Self::Heap => ppf.write("heap"),
-			Self::Option => ppf.write("option"),
-			Self::Result => ppf.write("result"),
-			Self::List => ppf.write("list"),
-			Self::Position => ppf.write("position"),
-			Self::Span => ppf.write("span"),
-			Self::Loc => ppf.write("loc"),
-			Self::Stack => ppf.write("stack")
-		}
+		ppf.write(self.ident().as_str())
 	}
 }
 

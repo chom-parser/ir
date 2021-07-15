@@ -13,14 +13,31 @@ impl<T: Namespace> PrettyPrint<T> for Function<T> {
 	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
 		match self.owner() {
 			function::Owner::Type(ty_ref) => {
-				ppf.write("method ")?;
+				if self.signature().mutates() {
+					ppf.write("method-mut ")?;
+				} else {
+					ppf.write("method ")?;
+				}
+				
+				if let Some(marker) = self.signature().marker() {
+					marker.fmt(ppf)?;
+					ppf.write(" ")?;
+				}
+
 				ty_ref.fmt(ppf)?;
 				ppf.write(".")?;
 			}
 			function::Owner::Module(_) => {
 				ppf.write("function ")?;
+				
+				if let Some(marker) = self.signature().marker() {
+					marker.fmt(ppf)?;
+					ppf.write(" ")?;
+				}
 			}
 		}
+
+		ppf.write_function_id(self.id())?;
 		
 		self.signature().fmt(ppf)?;
 
@@ -41,57 +58,36 @@ impl<T: Namespace> PrettyPrint<T> for Function<T> {
 
 impl<T: Namespace> PrettyPrint<T> for function::Signature<T> {
 	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
-		match self {
-			Self::UndefinedChar(x, error_ty) => {
-				ppf.write("undefined-char(")?;
-				ppf.write_var_id(*x)?;
-				ppf.write(") -> ")?;
-				error_ty.fmt(ppf)
-			}
-			Self::ExternParser(x, id) => {
-				ppf.write("parser-extern-")?;
-				ppf.write(id.as_str())?;
-				ppf.write("(")?;
-				ppf.write_var_id(*x)?;
-				ppf.write(") -> ")?;
-				ppf.write(id.as_str())
-			}
-			Self::Lexer(token_ty, error_ty) => {
-				ppf.write("next-token() -> result(")?;
-				token_ty.fmt(ppf)?;
+		ppf.write("(")?;
+		for (i, a) in self.arguments().iter().enumerate() {
+			if i > 0 {
 				ppf.write(", ")?;
-				error_ty.fmt(ppf)?;
-				ppf.write(")")
 			}
-			Self::Parser(x, token_ty, error_ty) => {
-				ppf.write("parse(")?;
-				ppf.write_var_id(*x)?;
-				ppf.write(": stream(")?;
-				token_ty.fmt(ppf)?;
-				ppf.write(", ")?;
-				error_ty.fmt(ppf)?;
-				ppf.write(") -> result(self, ")?;
-				error_ty.fmt(ppf)?;
-				ppf.write(")")
-			}
+			a.fmt(ppf)?;
 		}
+		ppf.write(") -> ")?;
+		self.return_type().fmt(ppf)
 	}
 }
 
-pub fn function_id<T: Namespace>(ppf: &mut PrettyPrinter<T>, sig: &function::Signature<T>) -> fmt::Result {
-	match sig {
-		function::Signature::UndefinedChar(_, _) => {
-			ppf.write("undefined-char")
+impl<T: Namespace> PrettyPrint<T> for function::Arg<T> {
+	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
+		if self.is_mutable() {
+			ppf.write("mut ")?;
 		}
-		function::Signature::ExternParser(_, id) => {
-			ppf.write("parser-extern-")?;
-			ppf.write(id.as_str())
-		}
-		function::Signature::Lexer(_, _) => {
-			ppf.write("next-token")
-		}
-		function::Signature::Parser(_, _, _) => {
-			ppf.write("parse")
+		ppf.write_var_id(self.id())?;
+		ppf.write(": ")?;
+		self.ty().fmt(ppf)
+	}
+}
+
+impl<T: Namespace> PrettyPrint<T> for function::Marker {
+	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
+		match self {
+			Self::UndefinedChar => ppf.write("[undefined-char]"),
+			Self::ExternParser => ppf.write("[extern-parser]"),
+			Self::Lexer => ppf.write("[lexer]"),
+			Self::Parser => ppf.write("[parser]")
 		}
 	}
 }

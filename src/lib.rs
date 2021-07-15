@@ -39,6 +39,8 @@ pub struct Context<T: Namespace> {
 
 pub struct NativeTypes<T: Namespace + ?Sized> {
 	unit: Type<T>,
+	chr: Type<T>,
+	string: Type<T>,
 	option: Type<T>,
 	result: Type<T>,
 	list: Type<T>,
@@ -46,7 +48,8 @@ pub struct NativeTypes<T: Namespace + ?Sized> {
 	heap: Type<T>,
 	position: Type<T>,
 	span: Type<T>,
-	loc: Type<T>
+	loc: Type<T>,
+	stream: Type<T>
 }
 
 impl<T: Namespace + ?Sized> NativeTypes<T> {
@@ -54,6 +57,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 		use ty::Native;
 		Self {
 			unit: Type::native(Native::Unit),
+			chr: Type::native(Native::Char),
+			string: Type::native(Native::String),
 			option: Type::native(Native::Option),
 			result: Type::native(Native::Result),
 			list: Type::native(Native::List),
@@ -62,6 +67,7 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 			position: Type::native(Native::Position),
 			span: Type::native(Native::Span),
 			loc: Type::native(Native::Loc),
+			stream: Type::native(Native::Stream)
 		}
 	}
 
@@ -69,6 +75,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 		use ty::Native;
 		match n {
 			Native::Unit => &self.unit,
+			Native::String => &self.string,
+			Native::Char => &self.chr,
 			Native::Option => &self.option,
 			Native::Result => &self.result,
 			Native::List => &self.list,
@@ -76,7 +84,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 			Native::Heap => &self.heap,
 			Native::Position => &self.position,
 			Native::Span => &self.span,
-			Native::Loc => &self.loc
+			Native::Loc => &self.loc,
+			Native::Stream => &self.stream
 		}
 	}
 
@@ -84,6 +93,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 		use ty::Native;
 		match n {
 			Native::Unit => &mut self.unit,
+			Native::Char => &mut self.chr,
+			Native::String => &mut self.string,
 			Native::Option => &mut self.option,
 			Native::Result => &mut self.result,
 			Native::List => &mut self.list,
@@ -91,7 +102,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 			Native::Heap => &mut self.heap,
 			Native::Position => &mut self.position,
 			Native::Span => &mut self.span,
-			Native::Loc => &mut self.loc
+			Native::Loc => &mut self.loc,
+			Native::Stream => &mut self.stream
 		}
 	}
 }
@@ -321,6 +333,9 @@ pub trait Namespace {
 	/// Label identifier type.
 	type Label: Copy + PartialEq + Eq + Hash;
 
+	/// Function identifier type.
+	type Function: Copy;
+
 	/// Returns the identifier associated to the given variable.
 	fn var_ident(&self, v: Self::Var) -> Ident;
 
@@ -335,6 +350,8 @@ pub trait Namespace {
 	fn field_ident(&self, f: Self::Field) -> Ident;
 
 	fn label_ident(&self, l: Self::Label) -> Ident;
+
+	fn function_ident(&self, f: Self::Function) -> Ident;
 }
 
 // pub trait ReverseNamespace: Namespace {
