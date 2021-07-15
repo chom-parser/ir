@@ -380,12 +380,53 @@ impl<T: Namespace + ?Sized> Expr<T> {
 		}
 	}
 
+	pub fn char() -> Self {
+		Self::Instance(Ref::Native(Native::Char), Vec::new())
+	}
+
+	pub fn string() -> Self {
+		Self::Instance(Ref::Native(Native::String), Vec::new())
+	}
+
+	pub fn option(e: Expr<T>) -> Self {
+		Self::Instance(Ref::Native(Native::Option), vec![e])
+	}
+
+	pub fn result(a: Expr<T>, b: Expr<T>) -> Self {
+		Self::Instance(Ref::Native(Native::Result), vec![a, b])
+	}
+
 	pub fn heap(e: Expr<T>) -> Self {
 		Self::Instance(Ref::Native(Native::Heap), vec![e])
 	}
 
 	pub fn locate(e: Expr<T>) -> Self {
 		Self::Instance(Ref::Native(Native::Loc), vec![e])
+	}
+
+	pub fn stream(e: Expr<T>) -> Self {
+		Self::Instance(Ref::Native(Native::Stream), vec![e])
+	}
+
+	/// If this type expression is a `result(a, b)`,
+	/// returns `(a, b)`.
+	pub fn as_result_type(&self) -> Option<(&Self, &Self)> {
+		match self {
+			Self::Instance(Ref::Native(Native::Result), args) => Some((args.get(0).unwrap(), args.get(1).unwrap())),
+			_ => None
+		}
+	}
+
+	/// If this type expression is a `result(a, b)`,
+	/// returns the `a` type.
+	pub fn ok_type(&self) -> Option<&Self> {
+		self.as_result_type().map(|(a, _)| a)
+	}
+
+	/// If this type expression is a `result(a, b)`,
+	/// returns the `b` type.
+	pub fn err_type(&self) -> Option<&Self> {
+		self.as_result_type().map(|(_, b)| b)
 	}
 }
 
@@ -394,6 +435,12 @@ impl<T: Namespace + ?Sized> Expr<T> {
 pub enum Native {
 	/// Unit type.
 	Unit,
+
+	/// Character.
+	Char,
+
+	/// String (or string reference).
+	String,
 
 	/// On-heap type.
 	///
@@ -424,12 +471,17 @@ pub enum Native {
 
 	/// Stack.
 	Stack,
+
+	/// Stream type.
+	Stream
 }
 
 impl Native {
 	pub fn from_ident(id: &Ident) -> Option<Self> {
 		match id.as_str() {
 			"unit" => Some(Self::Unit),
+			"char" => Some(Self::Char),
+			"string" => Some(Self::String),
 			"heap" => Some(Self::Heap),
 			"option" => Some(Self::Option),
 			"result" => Some(Self::Result),
@@ -438,6 +490,7 @@ impl Native {
 			"span" => Some(Self::Span),
 			"loc" => Some(Self::Loc),
 			"stack" => Some(Self::Stack),
+			"stream" => Some(Self::Stream),
 			_ => None
 		}
 	}
@@ -445,6 +498,8 @@ impl Native {
 	pub fn ident(&self) -> Ident {
 		match self {
 			Self::Unit => Ident::new("unit").unwrap(),
+			Self::Char => Ident::new("char").unwrap(),
+			Self::String => Ident::new("string").unwrap(),
 			Self::Heap => Ident::new("heap").unwrap(),
 			Self::Option => Ident::new("option").unwrap(),
 			Self::Result => Ident::new("result").unwrap(),
@@ -453,6 +508,7 @@ impl Native {
 			Self::Span => Ident::new("span").unwrap(),
 			Self::Loc => Ident::new("loc").unwrap(),
 			Self::Stack => Ident::new("stack").unwrap(),
+			Self::Stream => Ident::new("stream").unwrap(),
 		}
 	}
 

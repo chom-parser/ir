@@ -7,10 +7,15 @@ use source_span::{
 use crate::{
 	Context,
 	Namespace,
+	Constant,
 	Expr,
 	expr::{
 		self,
-		Var
+		Var,
+		LexerExpr,
+		StreamExpr,
+		StackExpr,
+		SpanExpr
 	},
 	Pattern,
 	ty,
@@ -22,7 +27,6 @@ pub mod value;
 pub mod frame;
 pub mod error;
 mod lexer;
-pub mod stream;
 mod stack;
 
 pub use value::Value;
@@ -71,7 +75,51 @@ pub enum Action<'e, T: Namespace> {
 	/// identified by its index (first parameter).
 	/// The second parameter gives an optional `this` to the call
 	/// if the function is a method.
-	Call(u32, Option<Reference>, usize)
+	Call(u32, Option<Reference>, usize),
+
+	/// Pop two values from the stack (a pair (value, state)) and
+	/// put them on the given stack.
+	/// 
+	/// The reference must be mutable.
+	StackPush(Reference),
+
+	/// Pop two values from the stack (a pair (value, span)) and
+	/// wrap them as a located value.
+	SpanLocate,
+
+	/// Pop a position value from the stack and
+	/// turn it into a span value. 
+	SpanFromPosition,
+
+	/// Pop a span value from the stack and
+	/// return its after position.
+	SpanAfter,
+
+	/// Pop two values from the stack (a pair (loc_opt, default_span))
+	/// and transpose the first value using the second
+	/// as default span.
+	SpanTranspose,
+
+	/// Pop a span value from the stack unwraps it and
+	/// bind the inner value to the first variable (if given)
+	/// and the span to the second variable (if given).
+	SpanUnwrap(Option<T::Var>, Option<T::Var>),
+
+	/// Pop two span values from the stack and merge them.
+	SpanMerge,
+
+	/// Pop a result value from the stack.
+	/// If it is a `Result::Err(err)` returns `Result::Err(err)`.
+	/// If it is a `Result::Ok(value)`, binds
+	/// `value` to the given variable and evaluates
+	/// the given expression.
+	Check(T::Var, &'e Expr<T>),
+
+	/// Pop a token value and create an unexpected token error.
+	ErrorUnexpectedToken,
+
+	/// Pop a node value and create an unexpected node error.
+	ErrorUnexpectedNode
 }
 
 pub struct Evaluator<'a, 'v, 'e, T: Namespace> where 'a: 'e {
@@ -106,6 +154,23 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		}
 	}
 
+	pub fn instanciate_lexer<I: Iterator<Item=std::io::Result<char>>>(&mut self, input: &'v mut I) -> Result<Value<'v>, Error> {
+		match self.context.lexer_types().next() {
+			Some(ty_index) => {
+				self.instanciate(ty::Ref::Defined(ty_index), Some(Value::Input(input)))
+			},
+			None => Err(Error::new(error::Desc::NoLexer))
+		}
+	}
+
+	pub fn parse(&mut self, parser: u32, lexer: Value<'v>) -> Result<Result<Value<'v>, Loc<error::Value<'v>>>, Error> {
+		let result = self.call(parser, None, vec![lexer])?;
+		Ok(match result.into_result()? {
+			Ok(v) => Ok(v),
+			Err(v) => Err(v.into_loc_error()?)
+		})
+	}
+
 	pub fn frame(&self) -> &Frame<'e, T> {
 		self.stack.last().unwrap()
 	}
@@ -132,7 +197,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		self.exec(Action::Eval(e))
 	}
 
-	fn call(&mut self, f_index: u32, this: Option<Reference>, args: Vec<Value<'v>>) -> Result<Value<'v>, Error> {
+	pub fn call(&mut self, f_index: u32, this: Option<Reference>, args: Vec<Value<'v>>) -> Result<Value<'v>, Error> {
 		let len = args.len();
 		self.values.extend(args);
 		self.exec(Action::Call(f_index, this, len))
@@ -244,7 +309,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		} else {
 			match x {
 				Var::Defined(x) => {
-					self.frame_mut().take(x);
+					self.frame_mut().take(x)?;
 					Ok(self.memory.remove(addr))
 				},
 				Var::This => {
@@ -317,15 +382,18 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 	}
 
 	fn pop_value(&mut self) -> Value<'v> {
-		self.values.pop().unwrap()
+		let value = self.values.pop().unwrap();
+		use fmt::ContextDisplay;
+		eprintln!("pop `{}`", value.display_in(self.context()));
+		value
 	}
 
+	/// Pop `n` values and return them in reverse order.
 	fn pop_values(&mut self, n: usize) -> Vec<Value<'v>> {
 		let mut values = Vec::with_capacity(n);
 		for _ in 0..n {
-			values.push(self.values.pop().unwrap())
+			values.push(self.pop_value())
 		}
-		values.reverse();
 		values
 	}
 
@@ -402,7 +470,160 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						let body = self.frame_mut().continue_loop(*label, args)?;
 						self.actions.push(Action::Eval(body))
 					}
-					_ => panic!("TODO")
+					Expr::Lexer(lexer, e) => {
+						match e {
+							LexerExpr::Peek => {
+								let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
+								let value = lexer.peek();
+								self.values.push(value)
+							}
+							LexerExpr::Span => {
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
+								let value = lexer.span();
+								self.values.push(value)
+							}
+							LexerExpr::Chars => {
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
+								let value = lexer.chars();
+								self.values.push(value)
+							}
+							LexerExpr::Buffer => {
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
+								let value = lexer.buffer();
+								self.values.push(value)
+							}
+							LexerExpr::Clear(next) => {
+								let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
+								lexer.clear();
+								self.actions.push(Action::Eval(next))
+							}
+							LexerExpr::Consume(next) => {
+								let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
+								match lexer.consume() {
+									Ok(()) => self.actions.push(Action::Eval(next)),
+									Err(e) => self.values.push(Value::err(e))
+								}
+							}
+						}
+					}
+					Expr::Stream(stream, e) => {
+						match e {
+							StreamExpr::Pull(x, next) => {
+								enum StreamAction<'v> {
+									CallMethod(u32),
+									Return(Value<'v>)
+								}
+
+								let action = match self.borrow_mut(*stream)? {
+									Value::Lexer(lexer) => {
+										StreamAction::CallMethod(lexer.method())
+									}
+									Value::Chars(chars) => {
+										StreamAction::Return(match chars.next() {
+											Some(c) => Value::some(Value::Constant(Constant::Char(c))),
+											None => Value::none()
+										})
+									},
+									_ => return Err(Error::new(E::NotAStream))
+								};
+
+								self.actions.push(Action::Eval(next));
+								self.actions.push(Action::Bind(*x, false));
+								match action {
+									StreamAction::CallMethod(index) => {
+										self.actions.push(Action::Call(index, Some(self.reference_to(*stream, true)?), 0))
+									}
+									StreamAction::Return(value) => {
+										self.values.push(value)
+									}
+								}
+							}
+						}
+					}
+					Expr::Stack(stack, e) => { eprintln!("stack");
+						match e {
+							StackExpr::Push(value, state, next) => {
+								self.actions.push(Action::Eval(next));
+								self.actions.push(Action::StackPush(self.reference_to(*stack, true)?));
+								self.actions.push(Action::Eval(value));
+								self.actions.push(Action::Eval(state))
+							}
+							StackExpr::Pop(x, y, next) => {
+								let stack = self.borrow_mut(*stack)?.as_stack_mut()?;
+								let (vx, vy) = stack.pop()?;
+
+								if let Some(x) = x {
+									self.bind(*x, false, vx)
+								}
+
+								if let Some(y) = y {
+									self.bind(*y, false, vy)
+								}
+
+								self.actions.push(Action::Eval(next))
+							}
+						}
+					}
+					Expr::Span(e) => {
+						match e {
+							SpanExpr::Locate(expr, span) => {
+								self.actions.push(Action::SpanLocate);
+								self.actions.push(Action::Eval(expr));
+								self.actions.push(Action::Eval(span))
+							}
+							SpanExpr::FromPosition(pos) => {
+								self.actions.push(Action::SpanFromPosition);
+								self.actions.push(Action::Eval(pos))
+							}
+							SpanExpr::After(span) => {
+								self.actions.push(Action::SpanAfter);
+								self.actions.push(Action::Eval(span))
+							}
+							SpanExpr::Transpose(loc_opt, default_span) => {
+								self.actions.push(Action::SpanTranspose);
+								self.actions.push(Action::Eval(loc_opt));
+								self.actions.push(Action::Eval(default_span))
+							}
+							SpanExpr::Unwrap(x, y, loc, next) => {
+								self.actions.push(Action::Eval(next));
+								self.actions.push(Action::SpanUnwrap(*x, *y));
+								self.actions.push(Action::Eval(loc))
+							}
+							SpanExpr::Merge(a, b) => {
+								self.actions.push(Action::SpanMerge);
+								self.actions.push(Action::Eval(a));
+								self.actions.push(Action::Eval(b))
+							}
+						}
+					}
+					Expr::Print(string, next) => {
+						eprintln!("{}", string);
+						self.actions.push(Action::Eval(next))
+					}
+					Expr::Write(output, string, next) => {
+						let output = self.borrow_mut(*output)?.as_output_mut()?;
+						output.write_all(string.as_bytes()).map_err(|e| self.error(E::IO(e)))?;
+						self.actions.push(Action::Eval(next))
+					}
+					Expr::Check(x, e, next) => {
+						self.actions.push(Action::Check(*x, e));
+						self.actions.push(Action::Eval(next))
+					}
+					Expr::Error(e) => {
+						match e {
+							expr::Error::UnexpectedToken(e) => {
+								self.actions.push(Action::ErrorUnexpectedToken);
+								self.actions.push(Action::Eval(e))
+							}
+							expr::Error::UnexpectedNode(e) => {
+								self.actions.push(Action::ErrorUnexpectedNode);
+								self.actions.push(Action::Eval(e))
+							}
+						}
+					}
+					Expr::Unreachable => {
+						return self.err(E::UnreachableReached)
+					}
 				}
 			}
 			Action::Bind(x, mutable) => {
@@ -469,8 +690,8 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							self.stack.push(Frame::new(this));
 
 							for (i, a) in args.into_iter().enumerate() {
-								let x = f.signature().arguments()[i];
-								self.bind(x, false, a)
+								let arg = f.signature().arguments()[i];
+								self.bind(arg.id(), arg.is_mutable(), a)
 							}
 
 							self.actions.push(Action::Eval(body))
@@ -479,8 +700,8 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						}
 					},
 					None => {
-						match f.signature() {
-							function::Signature::UndefinedChar(_, _) => {
+						match f.signature().marker() {
+							Some(function::Marker::UndefinedChar) => {
 								if len == 1 {
 									let arg = args.into_iter().next().unwrap().into_option()?;
 									let c = match arg {
@@ -492,7 +713,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 									return self.err(E::InvalidNumberOfArguments(1, len))
 								}
 							}
-							function::Signature::ExternParser(_, _) => {
+							Some(function::Marker::ExternParser(_)) => {
 								if len == 1 {
 									let arg = args.into_iter().next().unwrap().into_string()?;
 									self.values.push(Value::Opaque(arg));
@@ -505,32 +726,66 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					}
 				}
 			}
+			Action::StackPush(r) => {
+				debug_assert!(r.mutable);
+				let value = self.pop_value();
+				let state = self.pop_value();
+				let stack = self.memory[r.addr].as_stack_mut()?;
+				stack.push(value, state)
+			}
+			Action::SpanLocate => {
+				let value = self.pop_value();
+				let span = self.pop_value().into_span()?;
+				self.values.push(Value::Loc(Loc::new(Box::new(value), span)))
+			}
+			Action::SpanFromPosition => {
+				let pos = self.pop_value().into_position()?;
+				self.values.push(Value::Span(pos.into()))
+			}
+			Action::SpanAfter => {
+				let span = self.pop_value().into_span()?;
+				self.values.push(Value::Position(span.end()))
+			}
+			Action::SpanTranspose => {
+				let loc_opt = self.pop_value().into_option()?.map(Value::into_loc).transpose()?;
+				let default_span = self.pop_value().into_span()?;
+				self.values.push(Value::Loc(Loc::transposed(loc_opt, default_span).map(|v| Box::new(Value::option(v)))))
+			}
+			Action::SpanUnwrap(x, y) => {
+				let (value, span) = self.pop_value().into_loc()?.into_raw_parts();
+
+				if let Some(x) = x {
+					self.bind(x, false, value)
+				}
+
+				if let Some(y) = y {
+					self.bind(y, false, Value::Span(span))
+				}
+			}
+			Action::SpanMerge => {
+				let a = self.pop_value().into_span()?;
+				let b = self.pop_value().into_span()?;
+				self.values.push(Value::Span(a.union(b)))
+			}
+			Action::Check(x, next) => {
+				let value = self.pop_value();
+				if value.is_err() {
+					self.values.push(value)
+				} else {
+					self.bind(x, false, value.expect_ok()?);
+					self.actions.push(Action::Eval(next))
+				}
+			}
+			Action::ErrorUnexpectedToken => {
+				let e = self.pop_value();
+				self.values.push(Value::Error(error::Value::UnexpectedToken(Box::new(e))))
+			}
+			Action::ErrorUnexpectedNode => {
+				let e = self.pop_value();
+				self.values.push(Value::Error(error::Value::UnexpectedNode(Box::new(e))))
+			}
 		}
 
 		Ok(())
 	}
 }
-
-// /// Create a new lexer from the given source.
-// pub fn lexer<'a, 'v, 'e, T: Namespace, I>(env: &Frame<'a, 'v, 'e, T>, input: &'v mut I) -> Result<Value<'v>, Error> where I: Iterator<Item=std::io::Result<char>> {
-// 	match env.context().lexer_types().next() {
-// 		Some(ty_index) => {
-// 			env.instanciate(ty::Ref::Defined(ty_index), Some(Value::Input(input)))
-// 		},
-// 		None => Err(Error::new(error::Desc::NoLexer))
-// 	}
-// }
-
-// pub fn parse<'a, 'v, 'e, T: Namespace, P: Iterator<Item=std::io::Result<char>>>(
-// 	env: &mut Frame<'a, 'v, 'e, T>,
-// 	phrase: &'v mut P,
-// 	parser: u32
-// ) -> Result<Result<Value<'v>, Loc<error::Value<'v>>>, Error> {
-// 	// let lexer = lexer(env, phrase)?;
-// 	// let result = env.call(parser, None, vec![lexer])?;
-// 	// Ok(match result.into_result()? {
-// 	// 	Ok(v) => Ok(v),
-// 	// 	Err(v) => Err(v.into_loc_error()?)
-// 	// })
-// 	panic!("TODO")
-// }

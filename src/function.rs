@@ -14,65 +14,182 @@ pub enum Owner {
 	Type(ty::Ref)
 }
 
-/// Function signature.
-pub enum Signature<T: Namespace + ?Sized> {
-	/// Extern parser used by the lexer to process tokens.
-	/// 
-	/// The given `Ident` is a custom name used to build
-	/// the function's name.
-	ExternParser(T::Var, Ident),
-
-	/// Undefined character function.
-	/// 
-	/// The given type is the returned error type.
-	UndefinedChar(T::Var, ty::Expr<T>),
-
-	/// Parser function.
-	/// 
-	/// The first given type is the token type,
-	/// the second is the returned type.
-	Parser(T::Var, ty::Expr<T>, ty::Expr<T>),
-
-	/// Lexer function.
-	/// 
-	/// The first type is the token type.
-	/// The second type is the lexing error type.
-	Lexer(ty::Expr<T>, ty::Expr<T>)
+pub struct Arg<T: Namespace + ?Sized> {
+	id: T::Var,
+	mutable: bool,
+	ty: ty::Expr<T>
 }
 
-impl<T: Namespace + ?Sized> Signature<T> {
-	pub fn arguments(&self) -> &[T::Var] {
-		match self {
-			Self::ExternParser(x, _) => std::slice::from_ref(x),
-			Self::UndefinedChar(x, _) => std::slice::from_ref(x),
-			Self::Parser(x, _, _) => std::slice::from_ref(x),
-			Self::Lexer(_, _) => &[]
+impl<T: Namespace + ?Sized> Arg<T> {
+	pub fn new(id: T::Var, mutable: bool, ty: ty::Expr<T>) -> Self {
+		Self {
+			id, mutable, ty
 		}
+	}
+
+	pub fn id(&self) -> T::Var {
+		self.id
+	}
+
+	pub fn is_mutable(&self) -> bool {
+		self.mutable
+	}
+
+	pub fn ty(&self) -> &ty::Expr<T> {
+		&self.ty
+	}
+}
+
+/// Function signature.
+pub struct Signature<T: Namespace + ?Sized> {
+	/// Signature marker (indicates the role of the function).
+	marker: Option<Marker>,
+
+	/// If it borrows `this` mutably.
+	mutates: bool,
+
+	/// Arguments.
+	args: Vec<Arg<T>>,
+
+	/// Return type.
+	return_ty: ty::Expr<T>
+}
+
+pub enum Marker {
+	ExternParser(Ident),
+	UndefinedChar,
+	Parser,
+	Lexer
+}
+
+impl Marker {
+	pub fn is_lexer(&self) -> bool {
+		match self {
+			Self::Lexer => true,
+			_ => false
+		}
+	}
+
+	pub fn is_parser(&self) -> bool {
+		match self {
+			Self::Parser => true,
+			_ => false
+		}
+	}
+
+	pub fn is_extern_parser(&self) -> bool {
+		match self {
+			Self::ExternParser(_) => true,
+			_ => false
+		}
+	}
+
+	pub fn is_undefined_char_constructor(&self) -> bool {
+		match self {
+			Self::UndefinedChar => true,
+			_ => false
+		}
+	}
+}
+
+// /// Function signature.
+// pub enum Signature<T: Namespace + ?Sized> {
+// 	/// Extern parser used by the lexer to process tokens.
+// 	/// 
+// 	/// The given `Ident` is a custom name used to build
+// 	/// the function's name.
+// 	ExternParser(T::Var, Ident),
+
+// 	/// Undefined character function.
+// 	/// 
+// 	/// The given type is the returned error type.
+// 	UndefinedChar(T::Var, ty::Expr<T>),
+
+// 	/// Parser function.
+// 	/// 
+// 	/// The first given type is the token type,
+// 	/// the second is the returned type.
+// 	Parser(T::Var, ty::Expr<T>, ty::Expr<T>),
+
+// 	/// Lexer function.
+// 	/// 
+// 	/// The first type is the token type.
+// 	/// The second type is the lexing error type.
+// 	Lexer(ty::Expr<T>, ty::Expr<T>)
+// }
+
+impl<T: Namespace + ?Sized> Signature<T> {
+	pub fn extern_parser(id: Ident, x: T::Var, target_ty: ty::Expr<T>, error_ty: ty::Expr<T>) -> Self {
+		Self {
+			marker: Some(Marker::ExternParser(id)),
+			mutates: false,
+			args: vec![Arg::new(
+				x,
+				false,
+				ty::Expr::string()
+			)],
+			return_ty: ty::Expr::result(target_ty, error_ty)
+		}
+	}
+
+	pub fn undefined_char_constructor(x: T::Var, error_ty: ty::Expr<T>) -> Self {
+		Self {
+			marker: Some(Marker::UndefinedChar),
+			mutates: false,
+			args: vec![Arg::new(
+				x,
+				false,
+				ty::Expr::option(ty::Expr::char())
+			)],
+			return_ty: error_ty
+		}
+	}
+
+	pub fn lexer(lexer: T::Var, token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>) -> Self {
+		Self {
+			marker: Some(Marker::Parser),
+			mutates: true,
+			args: vec![],
+			return_ty: ty::Expr::result(token_ty, lexer_error_ty)
+		}
+	}
+
+	pub fn parser(lexer: T::Var, token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>, target_ty: ty::Expr<T>, error_ty: ty::Expr<T>) -> Self {
+		Self {
+			marker: Some(Marker::Parser),
+			mutates: false,
+			args: vec![Arg::new(
+				lexer,
+				true,
+				ty::Expr::stream(ty::Expr::result(token_ty, lexer_error_ty))
+			)],
+			return_ty: ty::Expr::result(target_ty, error_ty)
+		}
+	}
+
+	pub fn marker(&self) -> Option<&Marker> {
+		self.marker.as_ref()
+	}
+
+	pub fn arguments(&self) -> &[Arg<T>] {
+		&self.args
 	}
 
 	pub fn arity(&self) -> u32 {
-		self.arguments().len() as u32
+		self.args.len() as u32
 	}
 
 	pub fn is_lexer(&self) -> bool {
-		match self {
-			Self::Lexer(_, _) => true,
-			_ => false
-		}
+		self.marker.map(|m| m.is_lexer()).unwrap_or(false)
 	}
 
 	pub fn is_parser_for(&self, t: &ty::Expr<T>) -> bool {
-		match self {
-			Self::Parser(_, _, target_ty) => t == target_ty,
-			_ => false
-		}
+		self.marker.map(|m| m.is_parser()).unwrap_or(false) &&
+		self.return_ty.ok_type().unwrap() == t
 	}
 
-	pub fn borrows_mut(&self) -> bool {
-		match self {
-			Self::Lexer(_, _) => true,
-			_ => false
-		}
+	pub fn mutates(&self) -> bool {
+		self.mutates
 	}
 }
 
@@ -103,7 +220,7 @@ impl<T: Namespace + ?Sized> Function<T> {
 	}
 
 	pub fn is_method_mut(&self) -> bool {
-		self.is_method() && self.signature.borrows_mut()
+		self.is_method() && self.signature.mutates()
 	}
 
 	pub fn signature(&self) -> &Signature<T> {
