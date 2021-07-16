@@ -40,6 +40,14 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// Get a structure/enum field of the given value.
 	GetField(T::Var, ty::Ref, u32),
 
+	/// Create a reference to the given variable
+	/// (mutable or not depending on the given boolean).
+	Ref(Var<T>, bool),
+
+	/// Create a reference to the given variable field
+	/// (mutable or not depending on the given boolean).
+	RefField(Var<T>, u32, bool),
+
 	/// Declare a new variable initialized with the given expression,
 	/// then evaluate the next expression.
 	/// 
@@ -73,6 +81,12 @@ pub enum Expr<T: Namespace + ?Sized> {
 		cases: Vec<MatchCase<T>>,
 	},
 
+	/// Reference pattern matching.
+	MatchRef {
+		expr: Box<Expr<T>>,
+		cases: Vec<MatchCase<T>>,
+	},
+
 	/// Unwrap the value matching the given pattern and evaluate the next expression.
 	///
 	/// `PatternUnwrap(p, v, e)` is equivalent to the following bit of Ocaml-like code:
@@ -85,7 +99,7 @@ pub enum Expr<T: Namespace + ?Sized> {
 
 	/// Call the given function with an optional object
 	/// that will serve as `this`.
-	Call(u32, Option<(T::Var, bool)>, Vec<Expr<T>>),
+	Call(u32, Option<Box<Expr<T>>>, Vec<Expr<T>>),
 
 	/// Tail recursion.
 	///
@@ -137,7 +151,7 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// Then evaluate the given expression.
 	/// 
 	/// Updates the output.
-	DebugFormat(T::Var, Var<T>, Box<Expr<T>>),
+	DebugFormat(T::Var, Box<Expr<T>>, Box<Expr<T>>),
 
 	/// Check that the first given result value is
 	/// not an error.

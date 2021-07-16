@@ -14,7 +14,7 @@ pub struct Frame<'e, T: Namespace> {
 	bindings: HashMap<T::Var, Binding>,
 
 	/// The current `Var::This`.
-	this: Option<Reference>,
+	this: Option<Binding>,
 
 	/// Loop stack.
 	stack: Vec<LoopFrame<'e, T>>
@@ -24,7 +24,7 @@ impl<'e, T: Namespace> Frame<'e, T> {
 	pub fn new(this: Option<Reference>) -> Self {
 		Self {
 			bindings: HashMap::new(),
-			this,
+			this: this.map(|r| Binding::Bound(r)),
 			stack: Vec::new()
 		}
 	}
@@ -37,17 +37,20 @@ impl<'e, T: Namespace> Frame<'e, T> {
 		Err(self.error(e))
 	}
 
-	pub fn this(&self) -> Option<&Reference> {
+	pub fn this(&self) -> Option<&Binding> {
 		self.this.as_ref()
 	}
 
 	pub fn set_this(&mut self, this: Reference) {
-		self.this = Some(this)
+		self.this = Some(Binding::Bound(this))
 	}
 
 	pub fn get(&self, ns: &T, x: Var<T>) -> Result<&Reference, Error> {
 		match x {
-			Var::This => self.this.as_ref().ok_or_else(|| self.error(E::NoThis)),
+			Var::This => match &self.this {
+				Some(this) => this.bound(),
+				None => self.err(E::NoThis)
+			},
 			Var::Defined(x) => {
 				match self.stack.last() {
 					Some(frame) => {
@@ -67,21 +70,29 @@ impl<'e, T: Namespace> Frame<'e, T> {
 		}
 	}
 
-	pub fn take(&mut self, ns: &T, x: T::Var) -> Result<usize, Error> {
-		match self.stack.last_mut() {
-			Some(frame) => {
-				if let Some(b) = frame.bindings.get_mut(&x) {
-					return Ok(b.take()?.addr)
-				}
+	pub fn take(&mut self, ns: &T, x: Var<T>) -> Result<usize, Error> {
+		match x {
+			Var::This => match &mut self.this {
+				Some(this) => Ok(this.take()?.addr),
+				None => self.err(E::NoThis)
 			}
-			None => {
-				if let Some(b) = self.bindings.get_mut(&x) {
-					return Ok(b.take()?.addr)
+			Var::Defined(x) => {
+				match self.stack.last_mut() {
+					Some(frame) => {
+						if let Some(b) = frame.bindings.get_mut(&x) {
+							return Ok(b.take()?.addr)
+						}
+					}
+					None => {
+						if let Some(b) = self.bindings.get_mut(&x) {
+							return Ok(b.take()?.addr)
+						}
+					}
 				}
+
+				self.err(E::UnboundVariable(ns.var_ident(x)))
 			}
 		}
-
-		self.err(E::UnboundVariable(ns.var_ident(x)))
 	}
 
 	pub fn borrow(&self, ns: &T, x: Var<T>) -> Result<usize, Error> {
@@ -109,12 +120,14 @@ impl<'e, T: Namespace> Frame<'e, T> {
 		let mut frame = LoopFrame::new(label, args.iter().map(|(x, _)| *x).collect(), expr);
 
 		for (a, mutable) in args {
-			if let Var::Defined(x) = a {
-				let addr = self.take(ns, x)?;
-				frame.bindings.insert(x, Binding::new(
-					mutable,
-					addr
-				));
+			let binding = Binding::new(mutable, self.take(ns, a)?);
+			match a {
+				Var::This => {
+					self.this = Some(binding);
+				},
+				Var::Defined(x) => {
+					frame.bindings.insert(x, binding);
+				}
 			}
 		}
 
@@ -155,12 +168,21 @@ pub struct Reference {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Segment {
-	LocInner
+	LocInner,
+	Field(u32)
 }
 
 impl Reference {
+	pub fn push(&mut self, s: Segment) {
+		self.path.push(s)
+	}
+
 	pub fn loc_inner(&mut self) {
-		self.path.push(Segment::LocInner)
+		self.push(Segment::LocInner)
+	}
+
+	pub fn field(&mut self, i: u32) {
+		self.push(Segment::Field(i))
 	}
 }
 

@@ -88,6 +88,9 @@ pub enum Desc {
 	/// No match.
 	NoMatch,
 
+	/// No match.
+	NoMatchRef(String),
+
 	/// Let match failed.
 	PatternMissmatch(String, String),
 
@@ -163,6 +166,7 @@ impl fmt::Display for Desc {
 			Self::NotAnEnumType(_) => write!(f, "attempted to instanciate a non enum type using a variant"),
 			Self::InvalidFieldCount(expected, given) => write!(f, "invalid number of fields during instanciation: expected {}, found {}", expected, given),
 			Self::NoMatch => write!(f, "no pattern matches the given value"),
+			Self::NoMatchRef(value) => write!(f, "no pattern matches the referenced value `{}`", value),
 			Self::PatternMissmatch(pattern, value) => write!(f, "let-match failed: the value `{}` does not match the pattern `{}`", value, pattern),
 			Self::BindingPatternUnion => write!(f, "attempted to bind with a pattern uniont"),
 			Self::NotAnEnumVariant => write!(f, "assumed that the value is an enum variant where it is not"),

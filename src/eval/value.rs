@@ -104,7 +104,7 @@ impl<'v> Value<'v> {
 
 	pub fn is_copiable(&self) -> bool {
 		match self {
-			Self::Reference(r) => !r.mutable,
+			Self::Reference(_) => true,
 			Self::Constant(_) => true,
 			Self::Instance(ty_ref, data) => {
 				ty_ref.is_copiable() && data.is_copiable()
@@ -118,13 +118,27 @@ impl<'v> Value<'v> {
 
 	pub fn copy(&self) -> Result<Self, Error> {
 		match self {
-			Self::Reference(r) if !r.mutable => Ok(Self::Reference(r.clone())),
+			Self::Reference(r) => Ok(Self::Reference(r.clone())),
 			Self::Constant(c) => Ok(Self::Constant(c.clone())),
 			Self::Instance(ty_ref, data) => Ok(Self::Instance(*ty_ref, data.copy()?)),
 			Self::Position(p) => Ok(Self::Position(*p)),
 			Self::Span(s) => Ok(Self::Span(*s)),
 			Self::Loc(l) => Ok(Self::Loc(Loc::new(Box::new(l.as_ref().copy()?), l.span()))),
 			_ => Err(Error::new(E::CannotMoveOut))
+		}
+	}
+
+	pub fn as_reference(&self) -> Result<&Reference, Error> {
+		match self {
+			Self::Reference(r) => Ok(r),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_reference(self) -> Result<Reference, Error> {
+		match self {
+			Self::Reference(r) => Ok(r),
+			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
@@ -138,6 +152,13 @@ impl<'v> Value<'v> {
 	pub fn as_lexer_mut(&mut self) -> Result<&mut Lexer<'v>, Error> {
 		match self {
 			Self::Lexer(l) => Ok(l),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn as_chars_mut(&mut self) -> Result<&mut std::vec::IntoIter<char>, Error> {
+		match self {
+			Self::Chars(c) => Ok(c),
 			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}

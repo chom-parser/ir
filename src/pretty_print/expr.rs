@@ -50,6 +50,22 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 					_ => panic!("cannot pretty-print field access on non-struct type")
 				}
 			},
+			Self::Ref(x, mutable) => {
+				ppf.write("&")?;
+				if *mutable {
+					ppf.write("mut ")?;
+				}
+				x.fmt(ppf)
+			}
+			Self::RefField(x, index, mutable) => {
+				ppf.write("&")?;
+				if *mutable {
+					ppf.write("mut ")?;
+				}
+				x.fmt(ppf)?;
+				ppf.write(".")?;
+				ppf.write_u32(*index)
+			}
 			Self::Let(x, mutable, e, next) => {
 				ppf.write("let ")?;
 				if *mutable {
@@ -145,6 +161,24 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.write("}")?;
 				ppf.sep()
 			}
+			Self::MatchRef { expr, cases } => {
+				ppf.write("match-ref ")?;
+				expr.fmt(ppf)?;
+				ppf.write(" {")?;
+				ppf.begin()?;
+				for case in cases {
+					case.pattern.fmt(ppf)?;
+					ppf.write(" => {")?;
+					ppf.begin()?;
+					case.expr.fmt(ppf)?;
+					ppf.end()?;
+					ppf.write("}")?;
+					ppf.sep()?;
+				}
+				ppf.end()?;
+				ppf.write("}")?;
+				ppf.sep()
+			}
 			Self::LetMatch(pattern, e, next) => {
 				ppf.write("let-match ")?;
 				pattern.fmt(ppf)?;
@@ -157,12 +191,8 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 			Self::Call(index, this, args) => {
 				ppf.write("call ")?;
 				let f = ppf.context().function(*index).unwrap();
-				if let Some((x, mutable)) = this {
-					if *mutable {
-						ppf.write("mut ")?;
-					}
-
-					ppf.write(ppf.context().id().var_ident(*x).as_str())?;
+				if let Some(this) = this {
+					this.fmt(ppf)?;
 					ppf.write(".")?;
 				}
 				ppf.write_function_id(f.id())?;
