@@ -12,6 +12,7 @@ impl<T: Namespace> PrettyPrint<T> for Constant {
 	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
 		match self {
 			Self::Unit => ppf.write("()"),
+			Self::Bool(b) => ppf.write_bool(*b),
 			Self::Int(i) => ppf.write_u32(*i),
 			Self::Char(c) => ppf.write_char(*c),
 			Self::CharRange(a, b) => {

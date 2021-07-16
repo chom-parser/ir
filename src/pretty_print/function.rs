@@ -87,7 +87,8 @@ impl<T: Namespace> PrettyPrint<T> for function::Marker {
 			Self::UndefinedChar => ppf.write("[undefined-char]"),
 			Self::ExternParser => ppf.write("[extern-parser]"),
 			Self::Lexer => ppf.write("[lexer]"),
-			Self::Parser => ppf.write("[parser]")
+			Self::Parser => ppf.write("[parser]"),
+			Self::DebugFormat => ppf.write("[debug-format]")
 		}
 	}
 }

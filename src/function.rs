@@ -59,7 +59,8 @@ pub enum Marker {
 	ExternParser,
 	UndefinedChar,
 	Parser,
-	Lexer
+	Lexer,
+	DebugFormat
 }
 
 impl Marker {
@@ -90,33 +91,14 @@ impl Marker {
 			_ => false
 		}
 	}
+
+	pub fn is_debug_formatter(&self) -> bool {
+		match self {
+			Self::DebugFormat => true,
+			_ => false
+		}
+	}
 }
-
-// /// Function signature.
-// pub enum Signature<T: Namespace + ?Sized> {
-// 	/// Extern parser used by the lexer to process tokens.
-// 	/// 
-// 	/// The given `Ident` is a custom name used to build
-// 	/// the function's name.
-// 	ExternParser(T::Var, Ident),
-
-// 	/// Undefined character function.
-// 	/// 
-// 	/// The given type is the returned error type.
-// 	UndefinedChar(T::Var, ty::Expr<T>),
-
-// 	/// Parser function.
-// 	/// 
-// 	/// The first given type is the token type,
-// 	/// the second is the returned type.
-// 	Parser(T::Var, ty::Expr<T>, ty::Expr<T>),
-
-// 	/// Lexer function.
-// 	/// 
-// 	/// The first type is the token type.
-// 	/// The second type is the lexing error type.
-// 	Lexer(ty::Expr<T>, ty::Expr<T>)
-// }
 
 impl<T: Namespace + ?Sized> Signature<T> {
 	pub fn extern_parser(x: T::Var, target_ty: ty::Expr<T>, error_ty: ty::Expr<T>) -> Self {
@@ -167,6 +149,19 @@ impl<T: Namespace + ?Sized> Signature<T> {
 		}
 	}
 
+	pub fn debug_format(output: T::Var) -> Self {
+		Self {
+			marker: Some(Marker::DebugFormat),
+			mutates: false,
+			args: vec![Arg::new(
+				output,
+				true,
+				ty::Expr::output()
+			)],
+			return_ty: ty::Expr::unit()
+		}
+	}
+
 	pub fn marker(&self) -> Option<&Marker> {
 		self.marker.as_ref()
 	}
@@ -190,6 +185,10 @@ impl<T: Namespace + ?Sized> Signature<T> {
 	pub fn is_parser_for(&self, t: &ty::Expr<T>) -> bool {
 		self.marker.map(|m| m.is_parser()).unwrap_or(false) &&
 		self.return_ty.ok_type().unwrap() == t
+	}
+
+	pub fn is_debug_formatter(&self) -> bool {
+		self.marker.map(|m| m.is_debug_formatter()).unwrap_or(false)
 	}
 
 	pub fn mutates(&self) -> bool {
@@ -247,5 +246,13 @@ impl<T: Namespace + ?Sized> Function<T> {
 
 	pub fn is_parser_for(&self, t: &ty::Expr<T>) -> bool {
 		self.signature().is_parser_for(t)
+	}
+
+	pub fn is_debug_formatter_for(&self, t: ty::Ref) -> bool {
+		self.signature().is_debug_formatter() &&
+		match &self.owner {
+			Owner::Type(o) => *o == t,
+			_ => false
+		}
 	}
 }

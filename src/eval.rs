@@ -60,6 +60,10 @@ pub enum Action<'e, T: Namespace> {
 	/// variant.
 	Cons(ty::Ref, u32, usize),
 
+	/// Pop a boolean value from the stack and
+	/// use it as condition to execute the if-then-else.
+	If(&'e Expr<T>, &'e Expr<T>),
+
 	/// Pop a value from the stack and
 	/// perform a pattern matching on it using the
 	/// given cases.
@@ -76,6 +80,9 @@ pub enum Action<'e, T: Namespace> {
 	/// The second parameter gives an optional `this` to the call
 	/// if the function is a method.
 	Call(u32, Option<Reference>, usize),
+
+	/// Return from a function call.
+	Return,
 
 	/// Pop two values from the stack (a pair (value, state)) and
 	/// put them on the given stack.
@@ -120,6 +127,12 @@ pub enum Action<'e, T: Namespace> {
 
 	/// Pop a node value and create an unexpected node error.
 	ErrorUnexpectedNode
+}
+
+enum DebugFormatMethod {
+	Call(u32),
+	Opaque,
+	Loc
 }
 
 pub struct Evaluator<'a, 'v, 'e, T: Namespace> where 'a: 'e {
@@ -183,6 +196,38 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		self.context
 	}
 
+	pub fn store(&mut self, value: Value<'v>) -> Reference {
+		let addr = self.memory.insert(value);
+		Reference {
+			mutable: true,
+			addr,
+			path: Vec::new()
+		}
+	}
+
+	fn debug_format_method(&self, value: &Value<'v>) -> Result<DebugFormatMethod, Error> {
+		Ok(match value {
+			Value::Instance(ty_ref, _) => {
+				match ty_ref {
+					ty::Ref::Defined(_) => {
+						match self.context.ty(*ty_ref).unwrap().desc() {
+							ty::Desc::Opaque => DebugFormatMethod::Opaque,
+							_ => {
+								match self.context.debug_formatters_for(*ty_ref).next() {
+									Some(index) => DebugFormatMethod::Call(index),
+									_ => return self.err(E::UndefinedDebugFormatter)
+								}
+							}
+						}
+					}
+					_ => return self.err(E::UndefinedDebugFormatter)
+				}
+			}
+			Value::Loc(_) => DebugFormatMethod::Loc,
+			_ => return self.err(E::UndefinedDebugFormatter)
+		})
+	}
+
 	fn exec(&mut self, action: Action<'e, T>) -> Result<Value<'v>, Error> {
 		self.actions.push(action);
 
@@ -201,6 +246,26 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		let len = args.len();
 		self.values.extend(args);
 		self.exec(Action::Call(f_index, this, len))
+	}
+
+	pub fn debug_format(&mut self, value: Value<'v>) -> Result<String, Error> {
+		let method = self.debug_format_method(&value)?;
+		match method {
+			DebugFormatMethod::Call(index) => {
+				let r = self.store(value);
+				self.values.push(Value::Output(value::Output::string()));
+				let output = self.exec(Action::Call(index, Some(r), 1))?.into_output()?;
+				Ok(output.into_string().unwrap())
+			}
+			DebugFormatMethod::Opaque => {
+				let inner = value.into_opaque()?;
+				Ok(inner)
+			}
+			DebugFormatMethod::Loc => {
+				let inner = value.into_loc()?.into_inner();
+				self.debug_format(inner)
+			}
+		}
 	}
 
 	pub fn instanciate<V>(&self, ty_ref: ty::Ref, args: V) -> Result<Value<'v>, Error> where V: IntoIterator<Item=Value<'v>> {
@@ -298,12 +363,51 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 
 		Ok(Reference {
 			addr,
-			mutable
+			mutable,
+			path: Vec::new()
 		})
 	}
 
+	fn get(&self, r: &Reference) -> Result<&Value<'v>, Error> {
+		let mut value = &self.memory[r.addr];
+
+		for s in &r.path {
+			match s {
+				frame::Segment::LocInner => {
+					value = value.as_loc()?.as_ref().as_ref();
+				}
+			}
+		}
+
+		Ok(value)
+	}
+
+	fn get_mut(&mut self, r: &Reference) -> Result<&mut Value<'v>, Error> {
+		let mut value = &mut self.memory[r.addr];
+
+		for s in &r.path {
+			match s {
+				frame::Segment::LocInner => {
+					value = value.as_loc_mut()?.as_mut().as_mut();
+				}
+			}
+		}
+
+		Ok(value)
+	}
+
+	// fn take_reference(&mut self, r: Reference) -> Result<Value<'v>, Error> {
+	// 	if self.memory[r.addr].is_copiable() {
+	// 		Ok(self.memory[r.addr].copy()?)
+	// 	} else {
+	// 		let ns = self.context().id();
+	// 		self.frame_mut().take(ns, x)?;
+	// 		Ok(self.memory.remove(r.addr))
+	// 	}
+	// }
+
 	fn take(&mut self, x: Var<T>) -> Result<Value<'v>, Error> {
-		let addr = self.frame().borrow(self.context().id(), x)?;
+		let addr = self.frame().borrow(self.context().id(), x).map_err(|e| e.into_already_moved())?;
 		if self.memory[addr].is_copiable() {
 			Ok(self.memory[addr].copy()?)
 		} else {
@@ -318,6 +422,59 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 				}
 			}
 		}
+	}
+
+	fn let_match_ref(&mut self, r: &Reference, pattern: &Pattern<T>) -> Result<(), Error> {
+		let bindings = self.let_match_ref_bindings(r, pattern)?;
+		Ok(())
+	}
+
+	fn let_match_ref_bindings(&self, r: &Reference, pattern: &Pattern<T>) -> Result<Vec<T::Var, Reference>, Error> {
+		use fmt::ContextDisplay;
+		let mut bindings = Vec::new();
+
+		let value = self.get(r)?;
+		match (pattern, value) {
+			(Pattern::Any, _) => (),
+			(Pattern::Bind(x), _) => { bindings.push((*x, r.clone())) },
+			(Pattern::Literal(a), Value::Constant(b)) => {
+				if !a.matches(&b) {
+					return self.err(E::PatternMissmatch(
+						format!("{}", pattern.display_in(self.context())), 
+						format!("{}", value.display_in(self.context())), 
+					))
+				}
+			},
+			(Pattern::Cons(ty_a, va, patterns), Value::Instance(ty_b, data)) => {
+				if ty_a == ty_b {
+					match data {
+						value::InstanceData::EnumVariant(vb, args) => {
+							let len = args.len() as u32;
+							let expected_len = patterns.len() as u32;
+							if va == vb {
+								if expected_len == len {
+									for (i, a) in args.into_iter().enumerate() {
+										self.let_match_ref(a.unwrap()?, &patterns[i])?
+									}
+								} else {
+									return self.err(E::InvalidFieldCount(len, expected_len))
+								}
+							} else {
+								return self.err(E::PatternMissmatch(
+									format!("{}", pattern.display_in(self.context())), 
+									format!("{}", Value::Instance(ty_b, value::InstanceData::EnumVariant(vb, args)).display_in(self.context())), 
+								))
+							}
+						},
+						_ => return self.err(E::NotAnEnumVariant)
+					}
+				} else {
+					return self.err(E::IncompatibleType)
+				}
+			},
+		}
+
+		Ok(bindings)
 	}
 
 	fn let_match(&mut self, value: Value<'v>, pattern: &Pattern<T>) -> Result<(), Error> {
@@ -384,8 +541,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 
 	fn pop_value(&mut self) -> Value<'v> {
 		let value = self.values.pop().unwrap();
-		use fmt::ContextDisplay;
-		eprintln!("pop `{}`", value.display_in(self.context()));
+		// use fmt::ContextDisplay;
 		value
 	}
 
@@ -450,6 +606,10 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					Expr::Heap(e) => {
 						self.actions.push(Action::Eval(e))
 					}
+					Expr::If(condition, then_branch, else_branch) => {
+						self.actions.push(Action::If(then_branch, else_branch));
+						self.actions.push(Action::Eval(condition))
+					}
 					Expr::Match { expr, cases } => {
 						self.actions.push(Action::Match(cases));
 						self.actions.push(Action::Eval(expr))
@@ -464,7 +624,8 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						self.actions.extend(args.iter().map(Action::Eval));
 					}
 					Expr::TailRecursion { label, args, body } => {
-						self.frame_mut().begin_loop(*label, args.clone(), body);
+						let ns = self.context.id();
+						self.frame_mut().begin_loop(ns, *label, args.clone(), body)?;
 						self.actions.push(Action::Eval(body))
 					}
 					Expr::Recurse(label, args) => {
@@ -486,6 +647,11 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							LexerExpr::Chars => {
 								let lexer = self.borrow(*lexer)?.as_lexer()?;
 								let value = lexer.chars();
+								self.values.push(value)
+							}
+							LexerExpr::IsEmpty => {
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
+								let value = lexer.is_empty();
 								self.values.push(value)
 							}
 							LexerExpr::Buffer => {
@@ -510,7 +676,6 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					Expr::Stream(stream, e) => {
 						match e {
 							StreamExpr::Pull(x, next) => {
-								eprintln!("PULL");
 								enum StreamAction<'v> {
 									CallMethod(u32),
 									Return(Value<'v>)
@@ -542,7 +707,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							}
 						}
 					}
-					Expr::Stack(stack, e) => { eprintln!("stack");
+					Expr::Stack(stack, e) => {
 						match e {
 							StackExpr::Push(value, state, next) => {
 								self.actions.push(Action::Eval(next));
@@ -603,12 +768,39 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						self.actions.push(Action::Eval(next))
 					}
 					Expr::Write(output, string, next) => {
-						let output = self.borrow_mut(*output)?.as_output_mut()?;
-						output.write_all(string.as_bytes()).map_err(|e| self.error(E::IO(e)))?;
+						let output = self.borrow_mut(Var::Defined(*output))?.as_output_mut()?;
+						output.write(string).map_err(|e| self.error(E::IO(e)))?;
 						self.actions.push(Action::Eval(next))
 					}
+					Expr::DebugFormat(output, x, next) => {
+						let mut value_ref = self.reference_to(*x, false)?;
+
+						loop {
+							let method = self.debug_format_method(self.get(&value_ref)?)?;
+							match method {
+								DebugFormatMethod::Call(index) => {
+									let arg = self.take(Var::Defined(*output))?;
+									self.values.push(arg);
+
+									let this = self.store(Value::Reference(value_ref));
+
+									self.actions.push(Action::Eval(next));
+									self.actions.push(Action::Update(*output));
+									self.actions.push(Action::Call(index, Some(this), 1));
+									break
+								}
+								DebugFormatMethod::Opaque => {
+									let inner = self.get(&value_ref)?.as_opaque()?.to_string();
+									let output = self.borrow_mut(Var::Defined(*output))?.as_output_mut()?;
+									output.write(&inner).map_err(|e| self.error(E::IO(e)))?;
+								}
+								DebugFormatMethod::Loc => {
+									value_ref.loc_inner()
+								}
+							}
+						}
+					}
 					Expr::Check(x, e, next) => {
-						eprintln!("CHECK1");
 						self.actions.push(Action::Check(*x, next));
 						self.actions.push(Action::Eval(e))
 					}
@@ -635,7 +827,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 			}
 			Action::Update(x) => {
 				let value = self.pop_value();
-				*self.borrow_mut(Var::Defined(x))? = value
+				self.bind(x, true, value)
 			}
 			Action::Instanciate(ty_ref, n) => {
 				let args = self.pop_values(n);
@@ -662,14 +854,36 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					_ => return self.err(E::NotAnEnumType(ty_ref))
 				}
 			}
+			Action::If(then_branch, else_branch) => {
+				let condition = self.pop_value().into_bool()?;
+				if condition {
+					self.actions.push(Action::Eval(then_branch))
+				} else {
+					self.actions.push(Action::Eval(else_branch))
+				}
+			}
 			Action::Match(cases) => {
 				let value = self.pop_value();
 
-				for case in cases {
-					if value.matches(&case.pattern)? {
-						self.let_match(value, &case.pattern)?;
-						self.actions.push(Action::Eval(&case.expr));
-						return Ok(())
+				match value {
+					Value::Reference(r) => {
+						let value = self.get(&r)?;
+						for case in cases {
+							if value.matches(&case.pattern)? {
+								self.let_match_ref(&r, &case.pattern)?;
+								self.actions.push(Action::Eval(&case.expr));
+								return Ok(())
+							}
+						}
+					},
+					value => {
+						for case in cases {
+							if value.matches(&case.pattern)? {
+								self.let_match(value, &case.pattern)?;
+								self.actions.push(Action::Eval(&case.expr));
+								return Ok(())
+							}
+						}
 					}
 				}
 
@@ -697,6 +911,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 								self.bind(arg.id(), arg.is_mutable(), a)
 							}
 
+							self.actions.push(Action::Return);
 							self.actions.push(Action::Eval(body))
 						} else {
 							return self.err(E::InvalidNumberOfArguments(expected_len, len))
@@ -729,11 +944,14 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					}
 				}
 			}
+			Action::Return => {
+				self.stack.pop();
+			}
 			Action::StackPush(r) => {
 				debug_assert!(r.mutable);
 				let value = self.pop_value();
 				let state = self.pop_value();
-				let stack = self.memory[r.addr].as_stack_mut()?;
+				let stack = self.get_mut(&r)?.as_stack_mut()?;
 				stack.push(value, state)
 			}
 			Action::SpanLocate => {
@@ -771,7 +989,6 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 				self.values.push(Value::Span(a.union(b)))
 			}
 			Action::Check(x, next) => {
-				eprintln!("CHECK2");
 				let value = self.pop_value();
 				if value.is_err() {
 					self.values.push(value)

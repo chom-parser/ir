@@ -16,6 +16,12 @@ impl Error {
 			desc: d
 		}
 	}
+
+	pub fn into_already_moved(self) -> Self {
+		Self {
+			desc: self.desc.into_already_moved()
+		}
+	}
 }
 
 impl fmt::Display for Error {
@@ -124,7 +130,19 @@ pub enum Desc {
 	NoLexer,
 
 	/// The value is not a stream.
-	NotAStream
+	NotAStream,
+
+	/// The type has no debug formatter defined.
+	UndefinedDebugFormatter
+}
+
+impl Desc {
+	pub fn into_already_moved(self) -> Self {
+		match self {
+			Self::ValueMoved => Self::ValueAlreadyMoved,
+			e => e
+		}
+	}
 }
 
 impl fmt::Display for Desc {
@@ -157,7 +175,8 @@ impl fmt::Display for Desc {
 			Self::EmptyStack => write!(f, "attempted to pop an empty stack"),
 			Self::UndefinedLexerMethod => write!(f, "lexer type has no lexer function"),
 			Self::NoLexer => write!(f, "no lexer defined in the program"),
-			Self::NotAStream => write!(f, "attempted to pull from a non stream instance")
+			Self::NotAStream => write!(f, "attempted to pull from a non stream instance"),
+			Self::UndefinedDebugFormatter => write!(f, "no debug formatting function found")
 		}
 	}
 }

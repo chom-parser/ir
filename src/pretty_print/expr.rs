@@ -113,6 +113,20 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.write("heap")?;
 				e.fmt(ppf)
 			}
+			Self::If(condition, then_branch, else_branch) => {
+				ppf.write("if ")?;
+				condition.fmt(ppf)?;
+				ppf.write(" {")?;
+				ppf.begin()?;
+				then_branch.fmt(ppf)?;
+				ppf.end()?;
+				ppf.write("} else {")?;
+				ppf.begin()?;
+				else_branch.fmt(ppf)?;
+				ppf.end()?;
+				ppf.write("}")?;
+				ppf.sep()
+			}
 			Self::Match { expr, cases } => {
 				ppf.write("match ")?;
 				expr.fmt(ppf)?;
@@ -165,9 +179,12 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.write("loop ")?;
 				ppf.write(ppf.context().id().label_ident(*label).as_str())?;
 				ppf.write(" (")?;
-				for (i, a) in args.iter().enumerate() {
+				for (i, (a, mutable)) in args.iter().enumerate() {
 					if i > 0 {
 						ppf.write(", ")?;
+					}
+					if *mutable {
+						ppf.write("mut ")?;
 					}
 					a.fmt(ppf)?;
 				}
@@ -197,6 +214,7 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				match e {
 					LexerExpr::Peek => ppf.write("peek"),
 					LexerExpr::Span => ppf.write("span"),
+					LexerExpr::IsEmpty => ppf.write("empty?"),
 					LexerExpr::Chars => ppf.write("chars"),
 					LexerExpr::Buffer => ppf.write("buffer"),
 					LexerExpr::Clear(next) => {
@@ -316,7 +334,16 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.write("write ")?;
 				ppf.write_str(s)?;
 				ppf.write(" to ")?;
-				x.fmt(ppf)?;
+				ppf.write_var_id(*x)?;
+				ppf.write(" then ")?;
+				ppf.sep()?;
+				next.fmt(ppf)
+			}
+			Expr::DebugFormat(x, e, next) => {
+				ppf.write("debug-format ")?;
+				e.fmt(ppf)?;
+				ppf.write(" to ")?;
+				ppf.write_var_id(*x)?;
 				ppf.write(" then ")?;
 				ppf.sep()?;
 				next.fmt(ppf)

@@ -49,7 +49,8 @@ pub struct NativeTypes<T: Namespace + ?Sized> {
 	position: Type<T>,
 	span: Type<T>,
 	loc: Type<T>,
-	stream: Type<T>
+	stream: Type<T>,
+	output: Type<T>
 }
 
 impl<T: Namespace + ?Sized> NativeTypes<T> {
@@ -67,7 +68,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 			position: Type::native(Native::Position),
 			span: Type::native(Native::Span),
 			loc: Type::native(Native::Loc),
-			stream: Type::native(Native::Stream)
+			stream: Type::native(Native::Stream),
+			output: Type::native(Native::Output)
 		}
 	}
 
@@ -85,7 +87,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 			Native::Position => &self.position,
 			Native::Span => &self.span,
 			Native::Loc => &self.loc,
-			Native::Stream => &self.stream
+			Native::Stream => &self.stream,
+			Native::Output => &self.output
 		}
 	}
 
@@ -103,7 +106,8 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 			Native::Position => &mut self.position,
 			Native::Span => &mut self.span,
 			Native::Loc => &mut self.loc,
-			Native::Stream => &mut self.stream
+			Native::Stream => &mut self.stream,
+			Native::Output => &mut self.output
 		}
 	}
 }
@@ -307,6 +311,10 @@ impl<T: Namespace> Context<T> {
 
 	pub fn parsers_for<'a>(&'a self, ty: &'a ty::Expr<T>) -> impl 'a + Iterator<Item=u32> {
 		self.functions.iter().enumerate().filter(move |(_, f)| f.is_parser_for(ty)).map(|(i, _)| i as u32)
+	}
+
+	pub fn debug_formatters_for<'a>(&'a self, ty: ty::Ref) -> impl 'a + Iterator<Item=u32> {
+		self.functions.iter().enumerate().filter(move |(_, f)| f.is_debug_formatter_for(ty)).map(|(i, _)| i as u32)
 	}
 }
 

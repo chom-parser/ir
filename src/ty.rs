@@ -380,6 +380,10 @@ impl<T: Namespace + ?Sized> Expr<T> {
 		}
 	}
 
+	pub fn unit() -> Self {
+		Self::Instance(Ref::Native(Native::Unit), Vec::new())
+	}
+
 	pub fn char() -> Self {
 		Self::Instance(Ref::Native(Native::Char), Vec::new())
 	}
@@ -406,6 +410,10 @@ impl<T: Namespace + ?Sized> Expr<T> {
 
 	pub fn stream(e: Expr<T>) -> Self {
 		Self::Instance(Ref::Native(Native::Stream), vec![e])
+	}
+
+	pub fn output() -> Self {
+		Self::Instance(Ref::Native(Native::Output), Vec::new())
 	}
 
 	/// If this type expression is a `result(a, b)`,
@@ -473,7 +481,10 @@ pub enum Native {
 	Stack,
 
 	/// Stream type.
-	Stream
+	Stream,
+
+	/// Output.
+	Output
 }
 
 impl Native {
@@ -491,6 +502,7 @@ impl Native {
 			"loc" => Some(Self::Loc),
 			"stack" => Some(Self::Stack),
 			"stream" => Some(Self::Stream),
+			"output" => Some(Self::Output),
 			_ => None
 		}
 	}
@@ -509,6 +521,7 @@ impl Native {
 			Self::Loc => Ident::new("loc").unwrap(),
 			Self::Stack => Ident::new("stack").unwrap(),
 			Self::Stream => Ident::new("stream").unwrap(),
+			Self::Output => Ident::new("output").unwrap(),
 		}
 	}
 

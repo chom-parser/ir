@@ -44,6 +44,10 @@ impl<'v> Lexer<'v> {
 		Value::Span(self.span)
 	}
 
+	pub fn is_empty(&self) -> Value<'v> {
+		Value::Constant(Constant::Bool(self.buffer.is_empty()))
+	}
+
 	pub fn chars(&self) -> Value<'v> {
 		// Note: We need to copy the buffer here since
 		// we cannot know statically if the caller will

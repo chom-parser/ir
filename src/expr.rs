@@ -1,19 +1,32 @@
 use derivative::Derivative;
 use crate::{ty, Constant, Namespace, Pattern};
 
+#[derive(Derivative)]
+#[derivative(Clone(bound=""))]
 pub enum Error<T: Namespace + ?Sized> {
 	UnexpectedToken(Box<Expr<T>>),
 	UnexpectedNode(Box<Expr<T>>),
 }
 
 #[derive(Derivative)]
-#[derivative(Clone, Copy, PartialEq, Eq)]
+#[derivative(Clone(bound=""), Copy(bound=""), PartialEq(bound=""), Eq(bound=""))]
 pub enum Var<T: Namespace + ?Sized> {
 	This,
 	Defined(T::Var)
 }
 
+impl<T: Namespace + ?Sized> Var<T> {
+	pub fn eq_defined(&self, x: T::Var) -> bool {
+		match self {
+			Self::This => false,
+			Self::Defined(y) => x == *y
+		}
+	}
+}
+
 /// Expression.
+#[derive(Derivative)]
+#[derivative(Clone(bound=""))]
 pub enum Expr<T: Namespace + ?Sized> {
 	/// Literal value.
 	Literal(Constant),
@@ -51,6 +64,9 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// Put the given value on the heap.
 	Heap(Box<Expr<T>>),
 
+	/// If-then-else.
+	If(Box<Expr<T>>, Box<Expr<T>>, Box<Expr<T>>),
+
 	/// Pattern matching.
 	Match {
 		expr: Box<Expr<T>>,
@@ -86,7 +102,7 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// ```
 	TailRecursion {
 		label: T::Label,
-		args: Vec<Var<T>>,
+		args: Vec<(Var<T>, bool)>,
 		body: Box<Expr<T>>,
 	},
 
@@ -111,7 +127,17 @@ pub enum Expr<T: Namespace + ?Sized> {
 
 	/// Write the given string to the output,
 	/// and then evaluate the given expression.
-	Write(Var<T>, String, Box<Expr<T>>),
+	/// 
+	/// Updates the output.
+	Write(T::Var, String, Box<Expr<T>>),
+
+	/// Format the given variable (second parameter) to
+	/// the given output (first variable) using its defined
+	/// debug formatting method.
+	/// Then evaluate the given expression.
+	/// 
+	/// Updates the output.
+	DebugFormat(T::Var, Var<T>, Box<Expr<T>>),
 
 	/// Check that the first given result value is
 	/// not an error.
@@ -163,6 +189,8 @@ impl<T: Namespace + ?Sized> Expr<T> {
 }
 
 /// Lexer operation.
+#[derive(Derivative)]
+#[derivative(Clone(bound=""))]
 pub enum LexerExpr<T: Namespace + ?Sized> {
 	/// Peek a character from the source char stream.
 	/// 
@@ -173,6 +201,9 @@ pub enum LexerExpr<T: Namespace + ?Sized> {
 
 	/// Return that current span stored in the lexer.
 	Span,
+
+	/// Checks if the lexer is empty.
+	IsEmpty,
 
 	/// Creates an iterator from the characters of the buffer.
 	Chars,
@@ -203,6 +234,8 @@ impl<T: Namespace + ?Sized> LexerExpr<T> {
 	}
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound=""))]
 pub enum StreamExpr<T: Namespace + ?Sized> {
 	/// Get the next token from the parser and evaluate the given expression.
 	///
@@ -213,6 +246,8 @@ pub enum StreamExpr<T: Namespace + ?Sized> {
 	Pull(T::Var, Box<Expr<T>>),
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound=""))]
 pub enum StackExpr<T: Namespace + ?Sized> {
 	/// Push a value on the stack and evaluate the given expression.
 	///
@@ -231,6 +266,8 @@ pub enum StackExpr<T: Namespace + ?Sized> {
 	Pop(Option<T::Var>, Option<T::Var>, Box<Expr<T>>),
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound=""))]
 pub enum SpanExpr<T: Namespace + ?Sized> {
 	Locate(Box<Expr<T>>, Box<Expr<T>>),
 
@@ -292,6 +329,8 @@ impl<T: Namespace + ?Sized> Expr<T> {
 	}
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound=""))]
 pub struct MatchCase<T: Namespace + ?Sized> {
 	pub pattern: Pattern<T>,
 	pub expr: Expr<T>,

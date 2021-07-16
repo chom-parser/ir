@@ -63,6 +63,11 @@ impl<'a, 'f, T: Namespace> PrettyPrinter<'a, 'f, T> {
 		s.fmt(self.f)
 	}
 
+	pub fn write_bool(&mut self, b: bool) -> fmt::Result {
+		use fmt::Display;
+		b.fmt(self.f)
+	}
+
 	pub fn write_u32(&mut self, i: u32) -> fmt::Result {
 		use fmt::Display;
 		i.fmt(self.f)

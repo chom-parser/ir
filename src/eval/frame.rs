@@ -37,17 +37,17 @@ impl<'e, T: Namespace> Frame<'e, T> {
 		Err(self.error(e))
 	}
 
-	pub fn this(&self) -> Option<Reference> {
-		self.this
+	pub fn this(&self) -> Option<&Reference> {
+		self.this.as_ref()
 	}
 
 	pub fn set_this(&mut self, this: Reference) {
 		self.this = Some(this)
 	}
 
-	pub fn get(&self, ns: &T, x: Var<T>) -> Result<Reference, Error> {
+	pub fn get(&self, ns: &T, x: Var<T>) -> Result<&Reference, Error> {
 		match x {
-			Var::This => self.this.ok_or_else(|| self.error(E::NoThis)),
+			Var::This => self.this.as_ref().ok_or_else(|| self.error(E::NoThis)),
 			Var::Defined(x) => {
 				match self.stack.last() {
 					Some(frame) => {
@@ -105,14 +105,14 @@ impl<'e, T: Namespace> Frame<'e, T> {
 		}
 	}
 
-	pub fn begin_loop(&mut self, ns: &T, label: T::Label, args: Vec<Var<T>>, expr: &'e Expr<T>) -> Result<(), Error> {
-		let mut frame = LoopFrame::new(label, args, expr);
+	pub fn begin_loop(&mut self, ns: &T, label: T::Label, args: Vec<(Var<T>, bool)>, expr: &'e Expr<T>) -> Result<(), Error> {
+		let mut frame = LoopFrame::new(label, args.iter().map(|(x, _)| *x).collect(), expr);
 
-		for a in &args {
+		for (a, mutable) in args {
 			if let Var::Defined(x) = a {
-				let addr = self.take(ns, *x)?;
-				frame.bindings.insert(*x, Binding::new(
-					true,
+				let addr = self.take(ns, x)?;
+				frame.bindings.insert(x, Binding::new(
+					mutable,
 					addr
 				));
 			}
@@ -146,38 +146,59 @@ impl<'e, T: Namespace> Frame<'e, T> {
 	}
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Reference {
 	pub mutable: bool,
-	pub addr: usize
+	pub addr: usize,
+	pub path: Vec<Segment>
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Segment {
+	LocInner
+}
+
+impl Reference {
+	pub fn loc_inner(&mut self) {
+		self.path.push(Segment::LocInner)
+	}
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Binding {
-	Moved,
+	Moved(Reference),
 	Bound(Reference)
 }
 
 impl Binding {
 	pub fn new(mutable: bool, addr: usize) -> Self {
-		Self::Bound(Reference { mutable, addr })
+		Self::Bound(Reference { mutable, addr, path: Vec::new() })
 	}
 
-	pub fn bound(&self) -> Result<Reference, Error> {
+	pub fn bound(&self) -> Result<&Reference, Error> {
 		match self {
-			Self::Moved => Err(Error::new(E::ValueMoved)),
-			Self::Bound(r) => Ok(*r)
+			Self::Moved(_) => Err(Error::new(E::ValueMoved)),
+			Self::Bound(r) => Ok(r)
+		}
+	}
+
+	pub fn reference(&self) -> &Reference {
+		match self {
+			Self::Moved(r) => r,
+			Self::Bound(r) => r
 		}
 	}
 
 	pub fn take(&mut self) -> Result<Reference, Error> {
-		match *self {
-			Self::Moved => Err(Error::new(E::ValueAlreadyMoved)),
-			Self::Bound(r) => {
-				*self = Self::Moved;
-				Ok(r)
-			}
-		}
+		let r = match self {
+			Self::Moved(_) => return Err(Error::new(E::ValueAlreadyMoved)),
+			Self::Bound(r) => r.clone()
+		};
+
+		let mut moved = Self::Moved(r.clone());
+		std::mem::swap(self, &mut moved);
+
+		Ok(r)
 	}
 }
 
@@ -203,6 +224,7 @@ impl<'e, T: Namespace> LoopFrame<'e, T> {
 	}
 
 	pub fn clear(&mut self) {
-		self.bindings.clear()
+		let args = &self.args;
+		self.bindings.retain(|x, _| args.iter().any(|y| y.eq_defined(*x)))
 	}
 }

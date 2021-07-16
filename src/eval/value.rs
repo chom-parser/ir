@@ -16,11 +16,38 @@ use super::{
 	Stack,
 	error,
 	error::Desc as E,
-	Error
+	Error,
+	frame::Reference
 };
+
+pub enum Output<'v> {
+	IO(&'v mut dyn std::io::Write),
+	String(String)
+}
+
+impl<'v> Output<'v> {
+	pub fn string() -> Self {
+		Self::String(String::new())
+	}
+
+	pub fn write(&mut self, s: &str) -> std::io::Result<()> {
+		match self {
+			Self::IO(o) => o.write_all(s.as_bytes()),
+			Self::String(b) => Ok(b.push_str(s))
+		}
+	}
+
+	pub fn into_string(self) -> Option<String> {
+		match self {
+			Self::String(s) => Some(s),
+			_ => None
+		}
+	}
+}
 
 /// Value.
 pub enum Value<'v> {
+	Reference(Reference),
 	Constant(Constant),
 	Instance(ty::Ref, InstanceData<'v>),
 	Position(Position),
@@ -31,7 +58,7 @@ pub enum Value<'v> {
 	Stack(Stack<'v>),
 	Error(error::Value<'v>),
 	Input(&'v mut dyn Iterator<Item=Result<char, std::io::Error>>),
-	Output(&'v mut dyn std::io::Write),
+	Output(Output<'v>),
 	Opaque(String)
 }
 
@@ -77,6 +104,7 @@ impl<'v> Value<'v> {
 
 	pub fn is_copiable(&self) -> bool {
 		match self {
+			Self::Reference(r) => !r.mutable,
 			Self::Constant(_) => true,
 			Self::Instance(ty_ref, data) => {
 				ty_ref.is_copiable() && data.is_copiable()
@@ -90,6 +118,7 @@ impl<'v> Value<'v> {
 
 	pub fn copy(&self) -> Result<Self, Error> {
 		match self {
+			Self::Reference(r) if !r.mutable => Ok(Self::Reference(r.clone())),
 			Self::Constant(c) => Ok(Self::Constant(c.clone())),
 			Self::Instance(ty_ref, data) => Ok(Self::Instance(*ty_ref, data.copy()?)),
 			Self::Position(p) => Ok(Self::Position(*p)),
@@ -120,9 +149,23 @@ impl<'v> Value<'v> {
 		}
 	}
 
-	pub fn as_output_mut(&mut self) -> Result<&mut dyn std::io::Write, Error> {
+	pub fn as_output_mut(&mut self) -> Result<&mut Output<'v>, Error> {
 		match self {
 			Self::Output(o) => Ok(o),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_output(self) -> Result<Output<'v>, Error> {
+		match self {
+			Self::Output(o) => Ok(o),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_bool(self) -> Result<bool, Error> {
+		match self {
+			Self::Constant(Constant::Bool(b)) => Ok(b),
 			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
@@ -187,6 +230,27 @@ impl<'v> Value<'v> {
 		loc.try_map(|v| v.into_error())
 	}
 
+	pub fn into_loc(self) -> Result<Loc<Self>, Error> {
+		match self {
+			Self::Loc(v) => Ok(v.map(|v| *v)),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn as_loc(&self) -> Result<&Loc<Box<Self>>, Error> {
+		match self {
+			Self::Loc(v) => Ok(v),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn as_loc_mut(&mut self) -> Result<&mut Loc<Box<Self>>, Error> {
+		match self {
+			Self::Loc(v) => Ok(v),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
 	pub fn into_position(self) -> Result<Position, Error> {
 		match self {
 			Self::Position(p) => Ok(p),
@@ -201,16 +265,23 @@ impl<'v> Value<'v> {
 		}
 	}
 
-	pub fn into_loc(self) -> Result<Loc<Self>, Error> {
+	pub fn into_lexer(self) -> Result<Lexer<'v>, Error> {
 		match self {
-			Self::Loc(v) => Ok(v.map(|v| *v)),
+			Self::Lexer(l) => Ok(l),
 			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
-	pub fn into_lexer(self) -> Result<Lexer<'v>, Error> {
+	pub fn as_opaque(&self) -> Result<&str, Error> {
 		match self {
-			Self::Lexer(l) => Ok(l),
+			Self::Opaque(inner) => Ok(inner.as_str()),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
+	pub fn into_opaque(self) -> Result<String, Error> {
+		match self {
+			Self::Opaque(inner) => Ok(inner),
 			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
@@ -262,6 +333,7 @@ impl<'v> Value<'v> {
 impl<'v> fmt::Debug for Value<'v> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
+			Self::Reference(_) => write!(f, "Value::Reference(...)"),
 			Self::Constant(c) => write!(f, "Value::Constant({:?})", c),
 			Self::Instance(ty_ref, data) => write!(f, "Value::Instance({:?}, {:?})", ty_ref, data),
 			Self::Position(p) => write!(f, "Value::Position({:?})", p),
@@ -281,6 +353,7 @@ impl<'v> fmt::Debug for Value<'v> {
 impl<'v, T: Namespace> super::fmt::ContextDisplay<T> for Value<'v> {
 	fn fmt(&self, context: &Context<T>, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
+			Self::Reference(_) => write!(f, "&ref"),
 			Self::Constant(c) => write!(f, "{}", c),
 			Self::Instance(ty_ref, data) => {
 				let ty = context.ty(*ty_ref).unwrap();
