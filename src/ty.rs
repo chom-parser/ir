@@ -420,6 +420,15 @@ impl<T: Namespace + ?Sized> Expr<T> {
 		Self::Instance(Ref::Native(Native::Output), Vec::new())
 	}
 
+	/// If this type expression is a `option(t)`,
+	/// returns `t`.
+	pub fn some_type(&self) -> Option<&Self> {
+		match self {
+			Self::Instance(Ref::Native(Native::Option), args) => Some(args.get(0).unwrap()),
+			_ => None
+		}
+	}
+
 	/// If this type expression is a `result(a, b)`,
 	/// returns `(a, b)`.
 	pub fn as_result_type(&self) -> Option<(&Self, &Self)> {
