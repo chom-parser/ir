@@ -277,7 +277,7 @@ impl<T: Namespace> Context<T> {
 				function::Owner::Type(r) => self.type_path(r)
 			};
 
-			Path::new(owner_path, path::Segment::Function(f.signature()))
+			Path::new(owner_path, path::Segment::Function(f.id(), f.signature()))
 		})
 	}
 	
