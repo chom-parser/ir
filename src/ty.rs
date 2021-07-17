@@ -449,6 +449,15 @@ impl<T: Namespace + ?Sized> Expr<T> {
 	pub fn err_type(&self) -> Option<&Self> {
 		self.as_result_type().map(|(_, b)| b)
 	}
+
+	/// If this type expression is a `stream(t)`,
+	/// returns `t`.
+	pub fn stream_item(&self) -> Option<&Self> {
+		match self {
+			Self::Instance(Ref::Native(Native::Stream), args) => Some(args.get(0).unwrap()),
+			_ => None
+		}
+	}
 }
 
 /// Native type provided by the target language.
