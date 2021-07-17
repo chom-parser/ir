@@ -136,7 +136,7 @@ pub enum Desc {
 	NotAStream,
 
 	/// The type has no debug formatter defined.
-	UndefinedDebugFormatter
+	UndefinedDebugFormatter(String)
 }
 
 impl Desc {
@@ -180,7 +180,7 @@ impl fmt::Display for Desc {
 			Self::UndefinedLexerMethod => write!(f, "lexer type has no lexer function"),
 			Self::NoLexer => write!(f, "no lexer defined in the program"),
 			Self::NotAStream => write!(f, "attempted to pull from a non stream instance"),
-			Self::UndefinedDebugFormatter => write!(f, "no debug formatting function found")
+			Self::UndefinedDebugFormatter(value) => write!(f, "no debug formatting function found for value `{}`", value)
 		}
 	}
 }

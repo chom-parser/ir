@@ -59,7 +59,7 @@ pub enum Value<'v> {
 	Error(error::Value<'v>),
 	Input(&'v mut dyn Iterator<Item=Result<char, std::io::Error>>),
 	Output(Output<'v>),
-	Opaque(String)
+	Opaque(ty::Ref, String)
 }
 
 impl<'v> Value<'v> {
@@ -293,16 +293,16 @@ impl<'v> Value<'v> {
 		}
 	}
 
-	pub fn as_opaque(&self) -> Result<&str, Error> {
+	pub fn as_opaque(&self) -> Result<(ty::Ref, &str), Error> {
 		match self {
-			Self::Opaque(inner) => Ok(inner.as_str()),
+			Self::Opaque(ty_ref, inner) => Ok((*ty_ref, inner.as_str())),
 			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
 
-	pub fn into_opaque(self) -> Result<String, Error> {
+	pub fn into_opaque(self) -> Result<(ty::Ref, String), Error> {
 		match self {
-			Self::Opaque(inner) => Ok(inner),
+			Self::Opaque(ty_ref, inner) => Ok((ty_ref, inner)),
 			_ => Err(Error::new(E::IncompatibleType))
 		}
 	}
@@ -366,7 +366,7 @@ impl<'v> fmt::Debug for Value<'v> {
 			Self::Error(e) => write!(f, "Value::Error({:?})", e),
 			Self::Input(_) => write!(f, "Value::Input"),
 			Self::Output(_) => write!(f, "Value::Output"),
-			Self::Opaque(s) => write!(f, "Value::Opaque({:?})", s)
+			Self::Opaque(ty_ref, s) => write!(f, "Value::Opaque({:?}, {:?})", ty_ref, s)
 		}
 	}
 }
@@ -418,7 +418,10 @@ impl<'v, T: Namespace> super::fmt::ContextDisplay<T> for Value<'v> {
 			Self::Error(_) => write!(f, "error"),
 			Self::Input(_) => write!(f, "input"),
 			Self::Output(_) => write!(f, "output"),
-			Self::Opaque(s) => write!(f, "opaque({})", s)
+			Self::Opaque(ty_ref, s) => {
+				let ty = context.ty(*ty_ref).unwrap();
+				write!(f, "{}({})", ty.id().ident(context.id()), s)
+			}
 		}
 	}
 }

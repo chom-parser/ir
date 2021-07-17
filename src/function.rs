@@ -50,8 +50,10 @@ pub struct Signature<T: Namespace + ?Sized> {
 	/// Arguments.
 	args: Vec<Arg<T>>,
 
-	/// Return type.
-	return_ty: ty::Expr<T>
+	/// Return types.
+	/// 
+	/// Yes, a function may return multiple values.
+	return_tys: Vec<ty::Expr<T>>
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -110,7 +112,7 @@ impl<T: Namespace + ?Sized> Signature<T> {
 				false,
 				ty::Expr::string()
 			)],
-			return_ty: ty::Expr::result(target_ty, error_ty)
+			return_tys: vec![ty::Expr::result(target_ty, error_ty)]
 		}
 	}
 
@@ -123,16 +125,23 @@ impl<T: Namespace + ?Sized> Signature<T> {
 				false,
 				ty::Expr::option(ty::Expr::char())
 			)],
-			return_ty: error_ty
+			return_tys: vec![error_ty]
 		}
 	}
 
-	pub fn lexer(token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>) -> Self {
+	pub fn lexer(this: T::Var, lexer_ty: ty::Expr<T>, token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>) -> Self {
 		Self {
 			marker: Some(Marker::Lexer),
 			mutates: true,
-			args: vec![],
-			return_ty: ty::Expr::result(token_ty, lexer_error_ty)
+			args: vec![Arg::new(
+				this,
+				true,
+				lexer_ty.clone()
+			)],
+			return_tys: vec![
+				lexer_ty,
+				ty::Expr::result(token_ty, lexer_error_ty)
+			]
 		}
 	}
 
@@ -145,20 +154,27 @@ impl<T: Namespace + ?Sized> Signature<T> {
 				true,
 				ty::Expr::stream(ty::Expr::result(token_ty, lexer_error_ty))
 			)],
-			return_ty: ty::Expr::result(target_ty, error_ty)
+			return_tys: vec![ty::Expr::result(target_ty, error_ty)]
 		}
 	}
 
-	pub fn debug_format(output: T::Var) -> Self {
+	pub fn debug_format(this: T::Var, ty: ty::Expr<T>, output: T::Var) -> Self {
 		Self {
 			marker: Some(Marker::DebugFormat),
 			mutates: false,
-			args: vec![Arg::new(
-				output,
-				true,
-				ty::Expr::output()
-			)],
-			return_ty: ty::Expr::unit()
+			args: vec![
+				Arg::new(
+					this,
+					false,
+					ty::Expr::reference(ty)
+				),
+				Arg::new(
+					output,
+					true,
+					ty::Expr::output()
+				)
+			],
+			return_tys: vec![ty::Expr::output()]
 		}
 	}
 
@@ -170,8 +186,8 @@ impl<T: Namespace + ?Sized> Signature<T> {
 		&self.args
 	}
 
-	pub fn return_type(&self) -> &ty::Expr<T> {
-		&self.return_ty
+	pub fn return_types(&self) -> &[ty::Expr<T>] {
+		&self.return_tys
 	}
 
 	pub fn arity(&self) -> u32 {
@@ -184,7 +200,7 @@ impl<T: Namespace + ?Sized> Signature<T> {
 
 	pub fn is_parser_for(&self, t: &ty::Expr<T>) -> bool {
 		self.marker.map(|m| m.is_parser()).unwrap_or(false) &&
-		self.return_ty.ok_type().unwrap() == t
+		self.return_tys[0].ok_type().unwrap() == t
 	}
 
 	pub fn is_debug_formatter(&self) -> bool {

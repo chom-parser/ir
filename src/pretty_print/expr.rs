@@ -3,7 +3,6 @@ use crate::{
 	Namespace,
 	Expr,
 	expr::{
-		Var,
 		LexerExpr,
 		StreamExpr,
 		StackExpr,
@@ -17,23 +16,11 @@ use super::{
 	PrettyPrinter
 };
 
-impl<T: Namespace> PrettyPrint<T> for Var<T> {
-	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
-		match self {
-			Self::This => ppf.write("this"),
-			Self::Defined(x) => {
-				let id = ppf.context().id().var_ident(*x);
-				ppf.write(id.as_str())
-			}
-		}
-	}
-}
-
 impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
 		match self {
 			Self::Literal(c) => c.fmt(ppf),
-			Self::Get(x) => x.fmt(ppf),
+			Self::Get(x) => ppf.write_var_id(*x),
 			Self::GetField(x, ty_ref, index) => {
 				ppf.write(ppf.context().id().var_ident(*x).as_str())?;
 				ppf.write(".")?;
@@ -50,19 +37,13 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 					_ => panic!("cannot pretty-print field access on non-struct type")
 				}
 			},
-			Self::Ref(x, mutable) => {
+			Self::Ref(x) => {
 				ppf.write("&")?;
-				if *mutable {
-					ppf.write("mut ")?;
-				}
-				x.fmt(ppf)
+				ppf.write_var_id(*x)
 			}
-			Self::RefField(x, index, mutable) => {
+			Self::RefField(x, index) => {
 				ppf.write("&")?;
-				if *mutable {
-					ppf.write("mut ")?;
-				}
-				x.fmt(ppf)?;
+				ppf.write_var_id(*x)?;
 				ppf.write(".")?;
 				ppf.write_u32(*index)
 			}
@@ -188,15 +169,21 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.sep()?;
 				next.fmt(ppf)
 			}
-			Self::Call(index, this, args) => {
+			Self::Call(index, args) => {
 				ppf.write("call ")?;
 				let f = ppf.context().function(*index).unwrap();
-				if let Some(this) = this {
-					this.fmt(ppf)?;
-					ppf.write(".")?;
-				}
 				ppf.write_function_id(f.id())?;
 				ppf.write("(")?;
+				for (i, a) in args.iter().enumerate() {
+					if i > 0 {
+						ppf.write(", ")?;
+					}
+					a.fmt(ppf)?;
+				}
+				ppf.write(")")
+			}
+			Self::Return(args) => {
+				ppf.write("return(")?;
 				for (i, a) in args.iter().enumerate() {
 					if i > 0 {
 						ppf.write(", ")?;
@@ -216,7 +203,7 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 					if *mutable {
 						ppf.write("mut ")?;
 					}
-					a.fmt(ppf)?;
+					ppf.write_var_id(*a)?;
 				}
 				ppf.write(") {")?;
 				ppf.begin()?;
@@ -233,13 +220,13 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 					if i > 0 {
 						ppf.write(", ")?;
 					}
-					a.fmt(ppf)?;
+					ppf.write_var_id(*a)?;
 				}
 				ppf.write(")")
 			}
 			Self::Lexer(lexer, e) => {
 				ppf.write("lexer ")?;
-				lexer.fmt(ppf)?;
+				ppf.write_var_id(*lexer)?;
 				ppf.write(" ")?;
 				match e {
 					LexerExpr::Peek => ppf.write("peek"),
@@ -261,7 +248,7 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 			}
 			Self::Stream(stream, e) => {
 				ppf.write("stream ")?;
-				stream.fmt(ppf)?;
+				ppf.write_var_id(*stream)?;
 				ppf.write(" ")?;
 				match e {
 					StreamExpr::Pull(x, next) => {
@@ -275,7 +262,7 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 			}
 			Self::Stack(stack, e) => {
 				ppf.write("stack ")?;
-				stack.fmt(ppf)?;
+				ppf.write_var_id(*stack)?;
 				ppf.write(" ")?;
 				match e {
 					StackExpr::Push(a, b, next) => {

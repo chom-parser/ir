@@ -38,6 +38,7 @@ pub struct Context<T: Namespace> {
 }
 
 pub struct NativeTypes<T: Namespace + ?Sized> {
+	reference: Type<T>,
 	unit: Type<T>,
 	chr: Type<T>,
 	string: Type<T>,
@@ -57,6 +58,7 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 	pub fn new() -> Self {
 		use ty::Native;
 		Self {
+			reference: Type::native(Native::Reference),
 			unit: Type::native(Native::Unit),
 			chr: Type::native(Native::Char),
 			string: Type::native(Native::String),
@@ -76,6 +78,7 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 	pub fn get(&self, n: ty::Native) -> &Type<T> {
 		use ty::Native;
 		match n {
+			Native::Reference => &self.reference,
 			Native::Unit => &self.unit,
 			Native::String => &self.string,
 			Native::Char => &self.chr,
@@ -95,6 +98,7 @@ impl<T: Namespace + ?Sized> NativeTypes<T> {
 	pub fn get_mut(&mut self, n: ty::Native) -> &mut Type<T> {
 		use ty::Native;
 		match n {
+			Native::Reference => &mut self.reference,
 			Native::Unit => &mut self.unit,
 			Native::Char => &mut self.chr,
 			Native::String => &mut self.string,

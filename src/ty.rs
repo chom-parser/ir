@@ -380,6 +380,10 @@ impl<T: Namespace + ?Sized> Expr<T> {
 		}
 	}
 
+	pub fn reference(e: Expr<T>) -> Self {
+		Self::Instance(Ref::Native(Native::Reference), vec![e])
+	}
+
 	pub fn unit() -> Self {
 		Self::Instance(Ref::Native(Native::Unit), Vec::new())
 	}
@@ -441,6 +445,9 @@ impl<T: Namespace + ?Sized> Expr<T> {
 /// Native type provided by the target language.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Native {
+	/// Reference type.
+	Reference,
+
 	/// Unit type.
 	Unit,
 
@@ -490,6 +497,7 @@ pub enum Native {
 impl Native {
 	pub fn from_ident(id: &Ident) -> Option<Self> {
 		match id.as_str() {
+			"ref" => Some(Self::Reference),
 			"unit" => Some(Self::Unit),
 			"char" => Some(Self::Char),
 			"string" => Some(Self::String),
@@ -509,6 +517,7 @@ impl Native {
 
 	pub fn ident(&self) -> Ident {
 		match self {
+			Self::Reference => Ident::new("ref").unwrap(),
 			Self::Unit => Ident::new("unit").unwrap(),
 			Self::Char => Ident::new("char").unwrap(),
 			Self::String => Ident::new("string").unwrap(),
@@ -529,7 +538,7 @@ impl Native {
 	/// iff its parameter instances are can also be copied.
 	pub fn is_copiable(&self) -> bool {
 		match self {
-			Self::Unit | Self::Option | Self::Result | Self::Position | Self::Span => true,
+			Self::Reference | Self::Unit | Self::Option | Self::Result | Self::Position | Self::Span => true,
 			_ => false
 		}
 	}

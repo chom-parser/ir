@@ -11,7 +11,6 @@ use crate::{
 	Expr,
 	expr::{
 		self,
-		Var,
 		LexerExpr,
 		StreamExpr,
 		StackExpr,
@@ -82,9 +81,7 @@ pub enum Action<'e, T: Namespace> {
 	/// Pop the given amount of values (last parameter) from
 	/// the stack and use them to call the given function
 	/// identified by its index (first parameter).
-	/// The second parameter defines if an optional `this`
-	/// must be poped from the stack if the function is a method.
-	Call(u32, bool, usize),
+	Call(u32, usize),
 
 	/// Return from a function call.
 	Return,
@@ -169,7 +166,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		Self {
 			context,
 			memory: Slab::new(),
-			stack: vec![Frame::new(None)],
+			stack: vec![Frame::new()],
 			actions: Vec::new(),
 			values: Vec::new()
 		}
@@ -185,7 +182,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 	}
 
 	pub fn parse(&mut self, parser: u32, lexer: Value<'v>) -> Result<Result<Value<'v>, Loc<error::Value<'v>>>, Error> {
-		let result = self.call(parser, None, vec![lexer])?;
+		let result = self.call(parser, vec![lexer])?;
 		Ok(match result.into_result()? {
 			Ok(v) => Ok(v),
 			Err(v) => Err(v.into_loc_error()?)
@@ -214,6 +211,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 	}
 
 	fn debug_format_method(&self, value: &Value<'v>) -> Result<DebugFormatMethod, Error> {
+		use crate::eval::fmt::ContextDisplay;
 		Ok(match value {
 			Value::Reference(_) => {
 				DebugFormatMethod::Ref
@@ -226,16 +224,17 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							_ => {
 								match self.context.debug_formatters_for(*ty_ref).next() {
 									Some(index) => DebugFormatMethod::Call(index),
-									_ => return self.err(E::UndefinedDebugFormatter)
+									_ => return self.err(E::UndefinedDebugFormatter(format!("{}", value.display_in(self.context()))))
 								}
 							}
 						}
 					}
-					_ => return self.err(E::UndefinedDebugFormatter)
+					_ => return self.err(E::UndefinedDebugFormatter(format!("{}", value.display_in(self.context()))))
 				}
 			}
 			Value::Loc(_) => DebugFormatMethod::Loc,
-			_ => return self.err(E::UndefinedDebugFormatter)
+			Value::Opaque(_, _) => DebugFormatMethod::Opaque,
+			_ => return self.err(E::UndefinedDebugFormatter(format!("{}", value.display_in(self.context()))))
 		})
 	}
 
@@ -252,14 +251,10 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		self.exec()
 	}
 
-	pub fn call(&mut self, f_index: u32, this: Option<Reference>, args: Vec<Value<'v>>) -> Result<Value<'v>, Error> {
+	pub fn call(&mut self, f_index: u32, args: Vec<Value<'v>>) -> Result<Value<'v>, Error> {
 		let len = args.len();
 		self.values.extend(args);
-		let has_this = this.is_some();
-		if let Some(this) = this {
-			self.values.push(Value::Reference(this))
-		}
-		self.actions.push(Action::Call(f_index, has_this, len));
+		self.actions.push(Action::Call(f_index, len));
 		self.exec()
 	}
 
@@ -281,13 +276,15 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 				DebugFormatMethod::Call(index) => {
 					self.values.push(output);
 					self.values.push(Value::Reference(value_ref));
-					self.actions.push(Action::Call(index, true, 1));
+					self.actions.push(Action::Call(index, 2));
 					break
 				}
 				DebugFormatMethod::Opaque => {
-					let inner = self.get(&value_ref)?.as_opaque()?.to_string();
+					let (ty_ref, inner) = self.get(&value_ref)?.as_opaque()?;
+					let ty = self.context.ty(ty_ref).unwrap();
+					let string = format!("{}({})", ty.id().ident(self.context.id()), inner);
 					let mut output = output.into_output()?;
-					output.write(&inner).map_err(|e| self.error(E::IO(e)))?;
+					output.write(&string).map_err(|e| self.error(E::IO(e)))?;
 					self.values.push(Value::Output(output));
 					break
 				}
@@ -377,34 +374,25 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 		self.frame_mut().bind(x, mutable, addr)
 	}
 
-	fn borrow(&self, x: Var<T>) -> Result<&Value<'v>, Error> {
+	fn borrow(&self, x: T::Var) -> Result<&Value<'v>, Error> {
 		Ok(&self.memory[self.frame().borrow(self.context().id(), x)?])
 	}
 
-	fn deref(&self, x: Var<T>) -> Result<&Value<'v>, Error> {
-		let addr = match self.borrow(x)? {
-			Value::Reference(r) => r.addr,
-			_ => return self.err(E::IncompatibleType)
-		};
+	// fn deref(&self, x: T::Var) -> Result<&Value<'v>, Error> {
+	// 	let addr = match self.borrow(x)? {
+	// 		Value::Reference(r) => r.addr,
+	// 		_ => return self.err(E::IncompatibleType)
+	// 	};
 
-		Ok(&self.memory[addr])
-	}
+	// 	Ok(&self.memory[addr])
+	// }
 
-	fn borrow_mut(&mut self, x: Var<T>) -> Result<&mut Value<'v>, Error> {
+	fn borrow_mut(&mut self, x: T::Var) -> Result<&mut Value<'v>, Error> {
 		let addr = self.frame().borrow_mut(self.context().id(), x)?;
 		Ok(&mut self.memory[addr])
 	}
 
-	fn deref_mut(&mut self, x: Var<T>) -> Result<&mut Value<'v>, Error> {
-		let addr = match self.borrow(x)? {
-			Value::Reference(r) if r.mutable => r.addr,
-			_ => return self.err(E::IncompatibleType)
-		};
-
-		Ok(&mut self.memory[addr])
-	}
-
-	fn reference_to(&self, x: Var<T>, mutable: bool) -> Result<Reference, Error> {
+	fn reference_to(&self, x: T::Var, mutable: bool) -> Result<Reference, Error> {
 		let addr = if mutable {
 			self.frame().borrow_mut(self.context().id(), x)?
 		} else {
@@ -427,10 +415,11 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					value = value.as_loc()?.as_ref().as_ref();
 				}
 				frame::Segment::Field(i) => {
+					use crate::eval::fmt::ContextDisplay;
 					value = match value {
 						Value::Instance(_, value::InstanceData::EnumVariant(_, args)) => args[*i as usize].borrow()?,
 						Value::Instance(_, value::InstanceData::Struct(args)) => args[*i as usize].borrow()?,
-						_ => panic!("invalid field ref")
+						_ => panic!("invalid field ref on value: {}", value.display_in(self.context()))
 					}
 				}
 			}
@@ -470,7 +459,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 	// 	}
 	// }
 
-	fn take(&mut self, x: Var<T>) -> Result<Value<'v>, Error> {
+	fn take(&mut self, x: T::Var) -> Result<Value<'v>, Error> {
 		let addr = self.frame().borrow(self.context().id(), x).map_err(|e| e.into_already_moved())?;
 		if self.memory[addr].is_copiable() {
 			Ok(self.memory[addr].copy()?)
@@ -638,7 +627,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					},
 					Expr::GetField(x, ty_ref, index) => {
 						let index = *index;
-						let value = self.borrow_mut(Var::Defined(*x))?;
+						let value = self.borrow_mut(*x)?;
 						match value {
 							Value::Instance(value_ty_ref, data) => {
 								if value_ty_ref == ty_ref {
@@ -656,12 +645,12 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							_ => return self.err(E::NotAnInstance)
 						}
 					},
-					Expr::Ref(x, mutable) => {
-						let value = Value::Reference(self.reference_to(*x, *mutable)?);
+					Expr::Ref(x) => {
+						let value = Value::Reference(self.reference_to(*x, false)?);
 						self.values.push(value)
 					}
-					Expr::RefField(x, index, mutable) => {
-						let mut r = self.reference_to(*x, *mutable)?;
+					Expr::RefField(x, index) => {
+						let mut r = self.take(*x)?.into_reference()?;
 						r.field(*index);
 						self.values.push(Value::Reference(r))
 					},
@@ -702,12 +691,12 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						self.actions.push(Action::LetMatch(pattern, next));
 						self.actions.push(Action::Eval(expr))
 					}
-					Expr::Call(f_index, this, args) => {
+					Expr::Call(f_index, args) => {
 						// let this = this.map(|(x, mutable)| self.reference_to(Var::Defined(x), mutable)).transpose()?;
-						self.actions.push(Action::Call(*f_index, this.is_some(), args.len()));
-						if let Some(this) = this {
-							self.actions.push(Action::Eval(this))
-						}
+						self.actions.push(Action::Call(*f_index, args.len()));
+						self.actions.extend(args.iter().map(Action::Eval));
+					}
+					Expr::Return(args) => {
 						self.actions.extend(args.iter().map(Action::Eval));
 					}
 					Expr::TailRecursion { label, args, body } => {
@@ -722,37 +711,37 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					Expr::Lexer(lexer, e) => {
 						match e {
 							LexerExpr::Peek => {
-								let lexer = self.deref_mut(*lexer)?.as_lexer_mut()?;
+								let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
 								let value = lexer.peek();
 								self.values.push(value)
 							}
 							LexerExpr::Span => {
-								let lexer = self.deref(*lexer)?.as_lexer()?;
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
 								let value = lexer.span();
 								self.values.push(value)
 							}
 							LexerExpr::Chars => {
-								let lexer = self.deref(*lexer)?.as_lexer()?;
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
 								let value = lexer.chars();
 								self.values.push(value)
 							}
 							LexerExpr::IsEmpty => {
-								let lexer = self.deref(*lexer)?.as_lexer()?;
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
 								let value = lexer.is_empty();
 								self.values.push(value)
 							}
 							LexerExpr::Buffer => {
-								let lexer = self.deref(*lexer)?.as_lexer()?;
+								let lexer = self.borrow(*lexer)?.as_lexer()?;
 								let value = lexer.buffer();
 								self.values.push(value)
 							}
 							LexerExpr::Clear(next) => {
-								let lexer = self.deref_mut(*lexer)?.as_lexer_mut()?;
+								let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
 								lexer.clear();
 								self.actions.push(Action::Eval(next))
 							}
 							LexerExpr::Consume(next) => {
-								let lexer = self.deref_mut(*lexer)?.as_lexer_mut()?;
+								let lexer = self.borrow_mut(*lexer)?.as_lexer_mut()?;
 								match lexer.consume() {
 									Ok(()) => self.actions.push(Action::Eval(next)),
 									Err(e) => self.values.push(Value::err(e))
@@ -764,22 +753,13 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						match e {
 							StreamExpr::Pull(x, next) => {
 								enum StreamAction {
-									CallMethod(Reference, u32),
+									CallMethod(u32),
 									CharsNext
 								}
 
 								let action = match self.borrow(*stream)? {
-									Value::Reference(r) if r.mutable => {
-										match self.get(r)? {
-											Value::Lexer(lexer) => {
-												StreamAction::CallMethod(r.clone(), lexer.method())
-											},
-											_ => return Err(Error::new(E::NotAStream))
-										}
-									}
 									Value::Lexer(lexer) => {
-										let r = self.reference_to(*stream, true)?;
-										StreamAction::CallMethod(r, lexer.method())
+										StreamAction::CallMethod(lexer.method())
 									}
 									Value::Chars(_) => {
 										StreamAction::CharsNext
@@ -789,10 +769,12 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 
 								self.actions.push(Action::Eval(next));
 								self.actions.push(Action::Bind(*x, false));
+								self.actions.push(Action::Update(*stream));
 								match action {
-									StreamAction::CallMethod(r, index) => {
-										self.values.push(Value::Reference(r));
-										self.actions.push(Action::Call(index, true, 0))
+									StreamAction::CallMethod(index) => {
+										self.actions.push(Action::Call(index, 1));
+										let stream = self.take(*stream)?;
+										self.values.push(stream);
 									}
 									StreamAction::CharsNext => {
 										let chars = self.borrow_mut(*stream)?.as_chars_mut()?;
@@ -867,8 +849,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						self.actions.push(Action::Eval(next))
 					}
 					Expr::Write(output, string, next) => {
-						eprint!("write: {}", string);
-						let output = self.borrow_mut(Var::Defined(*output))?.as_output_mut()?;
+						let output = self.borrow_mut(*output)?.as_output_mut()?;
 						output.write(string).map_err(|e| self.error(E::IO(e)))?;
 						self.actions.push(Action::Eval(next))
 					}
@@ -878,7 +859,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						self.actions.push(Action::DebugFormat);
 						self.actions.push(Action::Eval(value));
 
-						let output = self.take(Var::Defined(*output))?;
+						let output = self.take(*output)?;
 						self.values.push(output);
 					}
 					Expr::Check(x, e, next) => {
@@ -976,14 +957,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 				self.let_match(value, pattern)?;
 				self.actions.push(Action::Eval(next))
 			}
-			Action::Call(f_index, has_this, n) => {
-				let this = if has_this {
-					let this = self.pop_value();
-					Some(self.store(this))
-				} else {
-					None
-				};
-
+			Action::Call(f_index, n) => {
 				let args = self.pop_values(n);
 				let f: &'e function::Function<T> = self.context.function(f_index).expect("unknown function");
 				let len = args.len() as u32;
@@ -993,7 +967,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						let expected_len = f.signature().arity();
 						
 						if expected_len == len {
-							self.stack.push(Frame::new(this));
+							self.stack.push(Frame::new());
 
 							for (i, a) in args.into_iter().enumerate() {
 								let arg = &f.signature().arguments()[i];
@@ -1022,8 +996,9 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							}
 							Some(function::Marker::ExternParser) => {
 								if len == 1 {
+									let ty_ref = f.signature().return_types()[0].ok_type().unwrap().as_reference().unwrap();
 									let arg = args.into_iter().next().unwrap().into_string()?;
-									self.values.push(Value::Opaque(arg));
+									self.values.push(Value::Opaque(ty_ref, arg));
 								} else {
 									return self.err(E::InvalidNumberOfArguments(1, len))
 								}

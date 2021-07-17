@@ -66,7 +66,13 @@ impl<T: Namespace> PrettyPrint<T> for function::Signature<T> {
 			a.fmt(ppf)?;
 		}
 		ppf.write(") -> ")?;
-		self.return_type().fmt(ppf)
+		for (i, ty) in self.return_types().iter().enumerate() {
+			if i > 0 {
+				ppf.write(", ")?;
+			}
+			ty.fmt(ppf)?;
+		}
+		Ok(())
 	}
 }
 

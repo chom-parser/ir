@@ -8,21 +8,21 @@ pub enum Error<T: Namespace + ?Sized> {
 	UnexpectedNode(Box<Expr<T>>),
 }
 
-#[derive(Derivative)]
-#[derivative(Clone(bound=""), Copy(bound=""), PartialEq(bound=""), Eq(bound=""))]
-pub enum Var<T: Namespace + ?Sized> {
-	This,
-	Defined(T::Var)
-}
+// #[derive(Derivative)]
+// #[derivative(Clone(bound=""), Copy(bound=""), PartialEq(bound=""), Eq(bound=""))]
+// pub enum Var<T: Namespace + ?Sized> {
+// 	This,
+// 	Defined(T::Var)
+// }
 
-impl<T: Namespace + ?Sized> Var<T> {
-	pub fn eq_defined(&self, x: T::Var) -> bool {
-		match self {
-			Self::This => false,
-			Self::Defined(y) => x == *y
-		}
-	}
-}
+// impl<T: Namespace + ?Sized> T::Var {
+// 	pub fn eq_defined(&self, x: T::Var) -> bool {
+// 		match self {
+// 			Self::This => false,
+// 			Self::Defined(y) => x == *y
+// 		}
+// 	}
+// }
 
 /// Expression.
 #[derive(Derivative)]
@@ -35,18 +35,16 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// 
 	/// This moves the value.
 	/// The caller ensures that the variable is not used anymore.
-	Get(Var<T>),
+	Get(T::Var),
 
 	/// Get a structure/enum field of the given value.
 	GetField(T::Var, ty::Ref, u32),
 
-	/// Create a reference to the given variable
-	/// (mutable or not depending on the given boolean).
-	Ref(Var<T>, bool),
+	/// Create a reference to the given variable.
+	Ref(T::Var),
 
-	/// Create a reference to the given variable field
-	/// (mutable or not depending on the given boolean).
-	RefField(Var<T>, u32, bool),
+	/// Create a reference to the given variable field.
+	RefField(T::Var, u32),
 
 	/// Declare a new variable initialized with the given expression,
 	/// then evaluate the next expression.
@@ -99,7 +97,12 @@ pub enum Expr<T: Namespace + ?Sized> {
 
 	/// Call the given function with an optional object
 	/// that will serve as `this`.
-	Call(u32, Option<Box<Expr<T>>>, Vec<Expr<T>>),
+	Call(u32, Vec<Expr<T>>),
+
+	/// Return from a function with the given values.
+	/// 
+	/// This is required to return multiple values at once.
+	Return(Vec<Expr<T>>),
 
 	/// Tail recursion.
 	///
@@ -116,20 +119,20 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// ```
 	TailRecursion {
 		label: T::Label,
-		args: Vec<(Var<T>, bool)>,
+		args: Vec<(T::Var, bool)>,
 		body: Box<Expr<T>>,
 	},
 
 	/// Recurse on the given tail recursion loop.
 	///
 	/// The list of argument must match the list of the `TailRecursion` arguments.
-	Recurse(T::Label, Vec<Var<T>>),
+	Recurse(T::Label, Vec<T::Var>),
 
-	Lexer(Var<T>, LexerExpr<T>),
+	Lexer(T::Var, LexerExpr<T>),
 
-	Stream(Var<T>, StreamExpr<T>),
+	Stream(T::Var, StreamExpr<T>),
 
-	Stack(Var<T>, StackExpr<T>),
+	Stack(T::Var, StackExpr<T>),
 
 	/// Span-related expressions.
 	Span(SpanExpr<T>),

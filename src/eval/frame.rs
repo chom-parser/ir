@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use crate::{
 	Namespace,
-	Expr,
-	expr::Var
+	Expr
 };
 use super::{
 	Error,
@@ -13,18 +12,14 @@ pub struct Frame<'e, T: Namespace> {
 	/// The current variables values.
 	bindings: HashMap<T::Var, Binding>,
 
-	/// The current `Var::This`.
-	this: Option<Binding>,
-
 	/// Loop stack.
 	stack: Vec<LoopFrame<'e, T>>
 }
 
 impl<'e, T: Namespace> Frame<'e, T> {
-	pub fn new(this: Option<Reference>) -> Self {
+	pub fn new() -> Self {
 		Self {
 			bindings: HashMap::new(),
-			this: this.map(|r| Binding::Bound(r)),
 			stack: Vec::new()
 		}
 	}
@@ -37,69 +32,45 @@ impl<'e, T: Namespace> Frame<'e, T> {
 		Err(self.error(e))
 	}
 
-	pub fn this(&self) -> Option<&Binding> {
-		self.this.as_ref()
-	}
-
-	pub fn set_this(&mut self, this: Reference) {
-		self.this = Some(Binding::Bound(this))
-	}
-
-	pub fn get(&self, ns: &T, x: Var<T>) -> Result<&Reference, Error> {
-		match x {
-			Var::This => match &self.this {
-				Some(this) => this.bound(),
-				None => self.err(E::NoThis)
-			},
-			Var::Defined(x) => {
-				match self.stack.last() {
-					Some(frame) => {
-						if let Some(b) = frame.bindings.get(&x) {
-							return b.bound()
-						}
-					}
-					None => {
-						if let Some(b) = self.bindings.get(&x) {
-							return b.bound()
-						}
-					}
+	pub fn get(&self, ns: &T, x: T::Var) -> Result<&Reference, Error> {
+		match self.stack.last() {
+			Some(frame) => {
+				if let Some(b) = frame.bindings.get(&x) {
+					return b.bound()
 				}
-		
-				self.err(E::UnboundVariable(ns.var_ident(x)))
+			}
+			None => {
+				if let Some(b) = self.bindings.get(&x) {
+					return b.bound()
+				}
 			}
 		}
+
+		self.err(E::UnboundVariable(ns.var_ident(x)))
 	}
 
-	pub fn take(&mut self, ns: &T, x: Var<T>) -> Result<usize, Error> {
-		match x {
-			Var::This => match &mut self.this {
-				Some(this) => Ok(this.take()?.addr),
-				None => self.err(E::NoThis)
-			}
-			Var::Defined(x) => {
-				match self.stack.last_mut() {
-					Some(frame) => {
-						if let Some(b) = frame.bindings.get_mut(&x) {
-							return Ok(b.take()?.addr)
-						}
-					}
-					None => {
-						if let Some(b) = self.bindings.get_mut(&x) {
-							return Ok(b.take()?.addr)
-						}
-					}
+	pub fn take(&mut self, ns: &T, x: T::Var) -> Result<usize, Error> {
+		match self.stack.last_mut() {
+			Some(frame) => {
+				if let Some(b) = frame.bindings.get_mut(&x) {
+					return Ok(b.take()?.addr)
 				}
-
-				self.err(E::UnboundVariable(ns.var_ident(x)))
+			}
+			None => {
+				if let Some(b) = self.bindings.get_mut(&x) {
+					return Ok(b.take()?.addr)
+				}
 			}
 		}
+
+		self.err(E::UnboundVariable(ns.var_ident(x)))
 	}
 
-	pub fn borrow(&self, ns: &T, x: Var<T>) -> Result<usize, Error> {
+	pub fn borrow(&self, ns: &T, x: T::Var) -> Result<usize, Error> {
 		Ok(self.get(ns, x)?.addr)
 	}
 
-	pub fn borrow_mut(&self, ns: &T, x: Var<T>) -> Result<usize, Error> {
+	pub fn borrow_mut(&self, ns: &T, x: T::Var) -> Result<usize, Error> {
 		let r = self.get(ns, x)?;
 		if r.mutable {
 			Ok(r.addr)
@@ -116,26 +87,19 @@ impl<'e, T: Namespace> Frame<'e, T> {
 		}
 	}
 
-	pub fn begin_loop(&mut self, ns: &T, label: T::Label, args: Vec<(Var<T>, bool)>, expr: &'e Expr<T>) -> Result<(), Error> {
+	pub fn begin_loop(&mut self, ns: &T, label: T::Label, args: Vec<(T::Var, bool)>, expr: &'e Expr<T>) -> Result<(), Error> {
 		let mut frame = LoopFrame::new(label, args.iter().map(|(x, _)| *x).collect(), expr);
 
-		for (a, mutable) in args {
-			let binding = Binding::new(mutable, self.take(ns, a)?);
-			match a {
-				Var::This => {
-					self.this = Some(binding);
-				},
-				Var::Defined(x) => {
-					frame.bindings.insert(x, binding);
-				}
-			}
+		for (x, mutable) in args {
+			let binding = Binding::new(mutable, self.take(ns, x)?);
+			frame.bindings.insert(x, binding);
 		}
 
 		self.stack.push(frame);
 		Ok(())
 	}
 
-	pub fn continue_loop(&mut self, label: T::Label, args: &[Var<T>]) -> Result<&'e Expr<T>, Error> {
+	pub fn continue_loop(&mut self, label: T::Label, args: &[T::Var]) -> Result<&'e Expr<T>, Error> {
 		loop {
 			match self.stack.last() {
 				Some(frame) => {
@@ -227,7 +191,7 @@ impl Binding {
 pub struct LoopFrame<'e, T: Namespace> {
 	label: T::Label,
 
-	args: Vec<Var<T>>,
+	args: Vec<T::Var>,
 
 	expr: &'e Expr<T>,
 
@@ -236,7 +200,7 @@ pub struct LoopFrame<'e, T: Namespace> {
 }
 
 impl<'e, T: Namespace> LoopFrame<'e, T> {
-	pub fn new(label: T::Label, args: Vec<Var<T>>, expr: &'e Expr<T>) -> Self {
+	pub fn new(label: T::Label, args: Vec<T::Var>, expr: &'e Expr<T>) -> Self {
 		Self {
 			label,
 			args,
@@ -247,6 +211,6 @@ impl<'e, T: Namespace> LoopFrame<'e, T> {
 
 	pub fn clear(&mut self) {
 		let args = &self.args;
-		self.bindings.retain(|x, _| args.iter().any(|y| y.eq_defined(*x)))
+		self.bindings.retain(|x, _| args.iter().any(|y| y == x))
 	}
 }
