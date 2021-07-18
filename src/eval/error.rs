@@ -11,7 +11,7 @@ pub struct Error {
 
 impl Error {
 	pub fn new(d: Desc) -> Self {
-		panic!("abort: {}", d);
+		// panic!("abort: {}", d);
 		Self {
 			desc: d
 		}

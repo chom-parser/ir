@@ -519,7 +519,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							let expected_len = patterns.len() as u32;
 							if va == vb {
 								if expected_len == len {
-									for (i, a) in args.into_iter().enumerate() {
+									for (i, _a) in args.into_iter().enumerate() {
 										let mut a_ref = r.clone();
 										a_ref.field(i as u32);
 										self.let_match_ref_bindings(bindings, &a_ref, &patterns[i])?
