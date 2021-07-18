@@ -422,8 +422,28 @@ impl<T: Namespace + ?Sized> Expr<T> {
 		Self::Instance(Ref::Native(Native::Heap), vec![e])
 	}
 
+	pub fn span() -> Self {
+		Self::Instance(Ref::Native(Native::Span), Vec::new())
+	}
+
 	pub fn locate(e: Expr<T>) -> Self {
 		Self::Instance(Ref::Native(Native::Loc), vec![e])
+	}
+
+	pub fn is_loc(&self) -> bool {
+		match self {
+			Self::Instance(Ref::Native(Native::Loc), _) => true,
+			_ => false
+		}
+	}
+
+	/// If this type expression is a `loc(t)`,
+	/// returns `t`.
+	pub fn located_type(&self) -> Option<&Self> {
+		match self {
+			Self::Instance(Ref::Native(Native::Loc), args) => Some(args.get(0).unwrap()),
+			_ => None
+		}
 	}
 
 	pub fn stream(e: Expr<T>) -> Self {

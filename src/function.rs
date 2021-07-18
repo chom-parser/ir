@@ -44,9 +44,6 @@ pub struct Signature<T: Namespace + ?Sized> {
 	/// Signature marker (indicates the role of the function).
 	marker: Option<Marker>,
 
-	/// If it borrows `this` mutably.
-	mutates: bool,
-
 	/// Arguments.
 	args: Vec<Arg<T>>,
 
@@ -103,10 +100,17 @@ impl Marker {
 }
 
 impl<T: Namespace + ?Sized> Signature<T> {
+	pub fn new(args: Vec<Arg<T>>, return_ty: ty::Expr<T>) -> Self {
+		Self {
+			marker: None,
+			args,
+			return_tys: vec![return_ty]
+		}
+	}
+
 	pub fn extern_parser(x: T::Var, target_ty: ty::Expr<T>, error_ty: ty::Expr<T>) -> Self {
 		Self {
 			marker: Some(Marker::ExternParser),
-			mutates: false,
 			args: vec![Arg::new(
 				x,
 				false,
@@ -119,7 +123,6 @@ impl<T: Namespace + ?Sized> Signature<T> {
 	pub fn unexpected_char_constructor(x: T::Var, error_ty: ty::Expr<T>) -> Self {
 		Self {
 			marker: Some(Marker::UnexpectedChar),
-			mutates: false,
 			args: vec![Arg::new(
 				x,
 				false,
@@ -132,11 +135,10 @@ impl<T: Namespace + ?Sized> Signature<T> {
 	pub fn lexer(this: T::Var, lexer_ty: ty::Expr<T>, token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>) -> Self {
 		Self {
 			marker: Some(Marker::Lexer),
-			mutates: true,
 			args: vec![Arg::new(
 				this,
 				true,
-				lexer_ty.clone()
+				ty::Expr::reference(lexer_ty.clone())
 			)],
 			return_tys: vec![
 				lexer_ty,
@@ -148,7 +150,6 @@ impl<T: Namespace + ?Sized> Signature<T> {
 	pub fn parser(lexer: T::Var, token_ty: ty::Expr<T>, lexer_error_ty: ty::Expr<T>, target_ty: ty::Expr<T>, error_ty: ty::Expr<T>) -> Self {
 		Self {
 			marker: Some(Marker::Parser),
-			mutates: false,
 			args: vec![Arg::new(
 				lexer,
 				true,
@@ -161,7 +162,6 @@ impl<T: Namespace + ?Sized> Signature<T> {
 	pub fn debug_format(this: T::Var, ty: ty::Expr<T>, output: T::Var) -> Self {
 		Self {
 			marker: Some(Marker::DebugFormat),
-			mutates: false,
 			args: vec![
 				Arg::new(
 					this,
@@ -205,10 +205,6 @@ impl<T: Namespace + ?Sized> Signature<T> {
 
 	pub fn is_debug_formatter(&self) -> bool {
 		self.marker.map(|m| m.is_debug_formatter()).unwrap_or(false)
-	}
-
-	pub fn mutates(&self) -> bool {
-		self.mutates
 	}
 }
 

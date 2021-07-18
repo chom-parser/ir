@@ -13,11 +13,7 @@ impl<T: Namespace> PrettyPrint<T> for Function<T> {
 	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
 		match self.owner() {
 			function::Owner::Type(ty_ref) => {
-				if self.signature().mutates() {
-					ppf.write("method-mut ")?;
-				} else {
-					ppf.write("method ")?;
-				}
+				ppf.write("method ")?;
 				
 				if let Some(marker) = self.signature().marker() {
 					marker.fmt(ppf)?;

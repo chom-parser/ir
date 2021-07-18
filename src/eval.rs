@@ -124,6 +124,15 @@ pub enum Action<'e, T: Namespace> {
 	/// the given expression.
 	Check(T::Var, &'e Expr<T>),
 
+	/// Pop a result value from the stack.
+	/// If it is a `Result::Err(err)` returns `Result::Err(f(a1, .., an, err))`,
+	/// where `f` is the function of the given index, and
+	/// `a1, ..., an` the given evaluated expressions.
+	/// If it is a `Result::Ok(value)`, binds
+	/// `value` to the given variable and evaluates
+	/// the given last expression.
+	CheckMap(T::Var, u32, &'e [Expr<T>], &'e Expr<T>),
+
 	/// Pop a `result(option(t), e)` value and transpose it
 	/// into a `option(result(t, e))` value.
 	ResultTranspose,
@@ -777,10 +786,10 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 
 								self.actions.push(Action::Eval(next));
 								self.actions.push(Action::Bind(*x, false));
-								self.actions.push(Action::Update(*stream));
 								match action {
 									StreamAction::CallMethod(index) => {
 										self.actions.push(Action::ResultTranspose);
+										self.actions.push(Action::Update(*stream));
 										self.actions.push(Action::Call(index, 1));
 										let stream = self.take(*stream)?;
 										self.values.push(stream);
@@ -875,21 +884,13 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						self.actions.push(Action::Check(*x, next));
 						self.actions.push(Action::Eval(e))
 					}
+					Expr::CheckMap(x, e, f_index, args, next) => {
+						self.actions.push(Action::CheckMap(*x, *f_index, args, next));
+						self.actions.push(Action::Eval(e))
+					}
 					Expr::Transpose(e) => {
 						self.actions.push(Action::OptionTranspose);
 						self.actions.push(Action::Eval(e))
-					}
-					Expr::Error(e) => {
-						match e {
-							expr::Error::UnexpectedToken(e) => {
-								self.actions.push(Action::ErrorUnexpectedToken);
-								self.actions.push(Action::Eval(e))
-							}
-							expr::Error::UnexpectedNode(e) => {
-								self.actions.push(Action::ErrorUnexpectedNode);
-								self.actions.push(Action::Eval(e))
-							}
-						}
 					}
 					Expr::Unreachable => {
 						return self.err(E::UnreachableReached)
@@ -1011,7 +1012,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 								if len == 1 {
 									let ty_ref = f.signature().return_types()[0].ok_type().unwrap().instance_type_reference().unwrap();
 									let arg = args.into_iter().next().unwrap().into_string()?;
-									self.values.push(Value::Opaque(ty_ref, arg));
+									self.values.push(Value::ok(Value::Opaque(ty_ref, arg)));
 								} else {
 									return self.err(E::InvalidNumberOfArguments(1, len))
 								}
@@ -1069,6 +1070,18 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 				let value = self.pop_value();
 				if value.is_err() {
 					self.values.push(value)
+				} else {
+					self.bind(x, false, value.expect_ok()?);
+					self.actions.push(Action::Eval(next))
+				}
+			}
+			Action::CheckMap(x, f_index, args, next) => {
+				let value = self.pop_value();
+				if value.is_err() {
+					self.actions.push(Action::Cons(ty::Ref::Native(ty::Native::Result), 1, 1));
+					self.actions.push(Action::Call(f_index, args.len() + 1));
+					self.actions.extend(args.iter().map(Action::Eval));
+					self.values.push(value.expect_err().unwrap())
 				} else {
 					self.bind(x, false, value.expect_ok()?);
 					self.actions.push(Action::Eval(next))

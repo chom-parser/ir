@@ -164,12 +164,19 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// evaluate the next expression.
 	Check(T::Var, Box<Expr<T>>, Box<Expr<T>>),
 
+	/// Check that the first given result value is
+	/// not an error.
+	/// 
+	/// If it is, then map the error using 
+	/// the given function and arguments (passing the
+	/// error as last argument) and return it.
+	/// If not, put it in the given variable and
+	/// evaluate the next expression.
+	CheckMap(T::Var, Box<Expr<T>>, u32, Vec<Expr<T>>, Box<Expr<T>>),
+
 	/// Tarnspose an `option(result(t, e))` value into
 	/// an `result(option(t), e)` value.
 	Transpose(Box<Expr<T>>),
-
-	/// Error value.
-	Error(Error<T>),
 
 	/// Unreachable expression.
 	Unreachable,
@@ -356,26 +363,3 @@ pub struct MatchCase<T: Namespace + ?Sized> {
 	pub pattern: Pattern<T>,
 	pub expr: Expr<T>,
 }
-
-// pub enum BuildArgs<T: Namespace + ?Sized> {
-// 	Tuple(Vec<Expr<T>>),
-// 	Struct(Vec<Binding<T>>),
-// }
-
-// impl<T: Namespace + ?Sized> BuildArgs<T> {
-// 	pub fn empty() -> Self {
-// 		BuildArgs::Tuple(Vec::new())
-// 	}
-
-// 	pub fn is_empty(&self) -> bool {
-// 		match self {
-// 			Self::Tuple(args) => args.is_empty(),
-// 			Self::Struct(bindings) => bindings.is_empty(),
-// 		}
-// 	}
-// }
-
-// pub struct Binding<T: Namespace + ?Sized> {
-// 	pub id: T::Field,
-// 	pub expr: Expr<T>,
-// }

@@ -374,11 +374,29 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.sep()?;
 				next.fmt(ppf)
 			}
+			Expr::CheckMap(x, e, f_index, args, next) => {
+				ppf.write("check-map ")?;
+				ppf.write(ppf.context().id().var_ident(*x).as_str())?;
+				ppf.write(" = ")?;
+				e.fmt(ppf)?;
+				ppf.write(" with ")?;
+				let f = ppf.context().function(*f_index).unwrap();
+				ppf.write_function_id(f.id())?;
+				ppf.write("(")?;
+				for (i, a) in args.iter().enumerate() {
+					if i > 0 {
+						ppf.write(", ")?;
+					}
+					a.fmt(ppf)?;
+				}
+				ppf.write(") in ")?;
+				ppf.sep()?;
+				next.fmt(ppf)
+			}
 			Expr::Transpose(e) => {
 				ppf.write("transpose ")?;
 				e.fmt(ppf)
 			}
-			Expr::Error(e) => e.fmt(ppf),
 			Expr::Unreachable => ppf.write("unreachable")
 		}
 	}

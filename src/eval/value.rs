@@ -102,6 +102,14 @@ impl<'v> Value<'v> {
 		}
 	}
 
+	/// Unwrap a value inside a `Result::Err`.
+	pub fn expect_err(self) -> Result<Self, Error> {
+		match self {
+			Self::Instance(ty::Ref::Native(ty::Native::Result), InstanceData::EnumVariant(1, args)) => Ok(args.into_iter().next().unwrap().unwrap()?),
+			_ => Err(Error::new(E::IncompatibleType))
+		}
+	}
+
 	pub fn is_copiable(&self) -> bool {
 		match self {
 			Self::Reference(_) => true,
