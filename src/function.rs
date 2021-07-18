@@ -59,7 +59,7 @@ pub struct Signature<T: Namespace + ?Sized> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Marker {
 	ExternParser,
-	UndefinedChar,
+	UnexpectedChar,
 	Parser,
 	Lexer,
 	DebugFormat
@@ -87,9 +87,9 @@ impl Marker {
 		}
 	}
 
-	pub fn is_undefined_char_constructor(&self) -> bool {
+	pub fn is_unexpected_char_constructor(&self) -> bool {
 		match self {
-			Self::UndefinedChar => true,
+			Self::UnexpectedChar => true,
 			_ => false
 		}
 	}
@@ -116,9 +116,9 @@ impl<T: Namespace + ?Sized> Signature<T> {
 		}
 	}
 
-	pub fn undefined_char_constructor(x: T::Var, error_ty: ty::Expr<T>) -> Self {
+	pub fn unexpected_char_constructor(x: T::Var, error_ty: ty::Expr<T>) -> Self {
 		Self {
-			marker: Some(Marker::UndefinedChar),
+			marker: Some(Marker::UnexpectedChar),
 			mutates: false,
 			args: vec![Arg::new(
 				x,
@@ -140,7 +140,7 @@ impl<T: Namespace + ?Sized> Signature<T> {
 			)],
 			return_tys: vec![
 				lexer_ty,
-				ty::Expr::result(token_ty, lexer_error_ty)
+				ty::Expr::result(ty::Expr::option(token_ty), lexer_error_ty)
 			]
 		}
 	}
@@ -178,8 +178,8 @@ impl<T: Namespace + ?Sized> Signature<T> {
 		}
 	}
 
-	pub fn marker(&self) -> Option<&Marker> {
-		self.marker.as_ref()
+	pub fn marker(&self) -> Option<Marker> {
+		self.marker
 	}
 
 	pub fn arguments(&self) -> &[Arg<T>] {
@@ -237,19 +237,46 @@ impl<T: Namespace + ?Sized> Function<T> {
 		self.id
 	}
 
-	pub fn is_method(&self) -> bool {
+	pub fn is_type_function(&self) -> bool {
 		match self.owner {
 			Owner::Type(_) => true,
 			Owner::Module(_) => false
 		}
 	}
 
-	pub fn is_method_mut(&self) -> bool {
-		self.is_method() && self.signature.mutates()
-	}
-
 	pub fn signature(&self) -> &Signature<T> {
 		&self.signature
+	}
+
+	/// Returns the name of the variable that can be used as
+	/// a `this` (or `self`) variable during code generation.
+	/// 
+	/// It is the first variable of a function owned by a type
+	/// whose type is the same as its owner.
+	pub fn this(&self) -> Option<T::Var> {
+		match self.owner {
+			Owner::Type(ty_ref) => {
+				if self.signature.arguments().is_empty() {
+					None
+				} else {
+					let first = &self.signature.arguments()[0];
+					match first.ty().referenced_type() {
+						Some(ty) => match ty.as_instance() {
+							Some((first_ty_ref, args)) => {
+								if ty_ref == first_ty_ref && args.iter().all(|a| a.is_var()) {
+									Some(first.id())
+								} else {
+									None
+								}
+							},
+							None => None
+						}
+						None => None
+					}
+				}
+			},
+			_ => None
+		}
 	}
 
 	pub fn body(&self) -> Option<&Expr<T>> {

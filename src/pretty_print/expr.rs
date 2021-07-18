@@ -41,7 +41,7 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.write("&")?;
 				ppf.write_var_id(*x)
 			}
-			Self::RefField(x, index) => {
+			Self::RefField(x, _, index) => {
 				ppf.write("&")?;
 				ppf.write_var_id(*x)?;
 				ppf.write(".")?;
@@ -373,6 +373,10 @@ impl<T: Namespace> PrettyPrint<T> for Expr<T> {
 				ppf.write(" in ")?;
 				ppf.sep()?;
 				next.fmt(ppf)
+			}
+			Expr::Transpose(e) => {
+				ppf.write("transpose ")?;
+				e.fmt(ppf)
 			}
 			Expr::Error(e) => e.fmt(ppf),
 			Expr::Unreachable => ppf.write("unreachable")

@@ -373,9 +373,23 @@ impl<T: Namespace + ?Sized> PartialEq for Expr<T> {
 impl<T: Namespace + ?Sized> Eq for Expr<T> {}
 
 impl<T: Namespace + ?Sized> Expr<T> {
-	pub fn as_reference(&self) -> Option<Ref> {
+	pub fn is_var(&self) -> bool {
+		match self {
+			Self::Var(_) => true,
+			_ => false
+		}
+	}
+
+	pub fn instance_type_reference(&self) -> Option<Ref> {
 		match self {
 			Self::Instance(r, _) => Some(*r),
+			_ => None
+		}
+	}
+
+	pub fn as_instance(&self) -> Option<(Ref, &[Expr<T>])> {
+		match self {
+			Self::Instance(r, args) => Some((*r, args)),
 			_ => None
 		}
 	}
@@ -418,6 +432,15 @@ impl<T: Namespace + ?Sized> Expr<T> {
 
 	pub fn output() -> Self {
 		Self::Instance(Ref::Native(Native::Output), Vec::new())
+	}
+
+	/// If this type expression is a `ref(t)`,
+	/// returns `t`.
+	pub fn referenced_type(&self) -> Option<&Self> {
+		match self {
+			Self::Instance(Ref::Native(Native::Reference), args) => Some(args.get(0).unwrap()),
+			_ => None
+		}
 	}
 
 	/// If this type expression is a `option(t)`,

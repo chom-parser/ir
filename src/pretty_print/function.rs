@@ -90,7 +90,7 @@ impl<T: Namespace> PrettyPrint<T> for function::Arg<T> {
 impl<T: Namespace> PrettyPrint<T> for function::Marker {
 	fn fmt(&self, ppf: &mut PrettyPrinter<T>) -> fmt::Result {
 		match self {
-			Self::UndefinedChar => ppf.write("[undefined-char]"),
+			Self::UnexpectedChar => ppf.write("[unexpected-char]"),
 			Self::ExternParser => ppf.write("[extern-parser]"),
 			Self::Lexer => ppf.write("[lexer]"),
 			Self::Parser => ppf.write("[parser]"),

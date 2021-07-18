@@ -124,6 +124,14 @@ pub enum Action<'e, T: Namespace> {
 	/// the given expression.
 	Check(T::Var, &'e Expr<T>),
 
+	/// Pop a `result(option(t), e)` value and transpose it
+	/// into a `option(result(t, e))` value.
+	ResultTranspose,
+
+	/// Pop a `option(result(t, e))` value and transpose it
+	/// into a `result(option(t), e)` value.
+	OptionTranspose,
+
 	/// Pop a token value and create an unexpected token error.
 	ErrorUnexpectedToken,
 
@@ -649,7 +657,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 						let value = Value::Reference(self.reference_to(*x, false)?);
 						self.values.push(value)
 					}
-					Expr::RefField(x, index) => {
+					Expr::RefField(x, _, index) => {
 						let mut r = self.take(*x)?.into_reference()?;
 						r.field(*index);
 						self.values.push(Value::Reference(r))
@@ -772,6 +780,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 								self.actions.push(Action::Update(*stream));
 								match action {
 									StreamAction::CallMethod(index) => {
+										self.actions.push(Action::ResultTranspose);
 										self.actions.push(Action::Call(index, 1));
 										let stream = self.take(*stream)?;
 										self.values.push(stream);
@@ -864,6 +873,10 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					}
 					Expr::Check(x, e, next) => {
 						self.actions.push(Action::Check(*x, next));
+						self.actions.push(Action::Eval(e))
+					}
+					Expr::Transpose(e) => {
+						self.actions.push(Action::OptionTranspose);
 						self.actions.push(Action::Eval(e))
 					}
 					Expr::Error(e) => {
@@ -982,7 +995,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					},
 					None => {
 						match f.signature().marker() {
-							Some(function::Marker::UndefinedChar) => {
+							Some(function::Marker::UnexpectedChar) => {
 								if len == 1 {
 									let arg = args.into_iter().next().unwrap().into_option()?;
 									let c = match arg {
@@ -996,7 +1009,7 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 							}
 							Some(function::Marker::ExternParser) => {
 								if len == 1 {
-									let ty_ref = f.signature().return_types()[0].ok_type().unwrap().as_reference().unwrap();
+									let ty_ref = f.signature().return_types()[0].ok_type().unwrap().instance_type_reference().unwrap();
 									let arg = args.into_iter().next().unwrap().into_string()?;
 									self.values.push(Value::Opaque(ty_ref, arg));
 								} else {
@@ -1060,6 +1073,30 @@ impl<'a, 'v, 'e, T: Namespace> Evaluator<'a, 'v, 'e, T> where 'a: 'e {
 					self.bind(x, false, value.expect_ok()?);
 					self.actions.push(Action::Eval(next))
 				}
+			}
+			Action::ResultTranspose => {
+				let value = self.pop_value();
+				let transposed = match value.into_result()? {
+					Ok(value_opt) => {
+						match value_opt.into_option()? {
+							Some(value) => Value::some(Value::ok(value)),
+							None => Value::none()
+						}
+					}
+					Err(e) => Value::some(Value::err(e))
+				};
+				self.values.push(transposed)
+			}
+			Action::OptionTranspose => {
+				let value = self.pop_value();
+				let transposed = match value.into_option()? {
+					Some(result) => match result.into_result()? {
+						Ok(value) => Value::ok(Value::some(value)),
+						Err(e) => Value::err(e)
+					}
+					None => Value::ok(Value::none())
+				};
+				self.values.push(transposed)
 			}
 			Action::ErrorUnexpectedToken => {
 				let e = self.pop_value();

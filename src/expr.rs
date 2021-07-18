@@ -44,7 +44,7 @@ pub enum Expr<T: Namespace + ?Sized> {
 	Ref(T::Var),
 
 	/// Create a reference to the given variable field.
-	RefField(T::Var, u32),
+	RefField(T::Var, ty::Ref, u32),
 
 	/// Declare a new variable initialized with the given expression,
 	/// then evaluate the next expression.
@@ -163,6 +163,10 @@ pub enum Expr<T: Namespace + ?Sized> {
 	/// If not, put it in the given variable and
 	/// evaluate the next expression.
 	Check(T::Var, Box<Expr<T>>, Box<Expr<T>>),
+
+	/// Tarnspose an `option(result(t, e))` value into
+	/// an `result(option(t), e)` value.
+	Transpose(Box<Expr<T>>),
 
 	/// Error value.
 	Error(Error<T>),
